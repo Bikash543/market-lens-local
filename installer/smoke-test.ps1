@@ -1,0 +1,113 @@
+param([string]$InstallerPath)
+$ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$version = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
+if (-not $InstallerPath) { $InstallerPath = Join-Path $repoRoot "release\Market-Lens-Local-Setup-$version-x64.exe" }
+$registration = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{94D7F0AA-A8E4-4FA1-AB60-E579BCE62C54}_is1'
+if (Test-Path -LiteralPath $registration) { throw 'An installer edition is already registered. Test in a clean Windows account instead.' }
+$testBase = Join-Path $repoRoot 'work\installer-smoke'
+$testRoot = Join-Path $testBase (Get-Date -Format 'yyyyMMdd-HHmmss')
+$installDir = Join-Path $testRoot 'Installed app'
+$dataDir = Join-Path $testRoot 'User data'
+$base = 'http://127.0.0.1:18787'
+$control = 'http://127.0.0.1:18788'
+foreach ($port in @(18787,18788,18789)) {
+    if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { throw "Test port $port is already used" }
+}
+New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+$env:MARKET_LENS_PORT = '18787'
+$env:MARKET_LENS_DATA_DIR = $dataDir
+$originalPath = $env:PATH
+$originalStatus = $null
+try { $originalStatus = Invoke-RestMethod 'http://127.0.0.1:8788/status' -TimeoutSec 2 } catch {}
+$results = [Collections.Generic.List[string]]::new()
+function Pass([string]$name) { $results.Add($name); Write-Output ("PASS: " + $name) }
+function Install-App {
+    $process = Start-Process -FilePath $InstallerPath -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOICONS','/TASKS=""',('/DIR="' + $installDir + '"'),('/LOG="' + (Join-Path $testRoot 'install.log') + '"')) -WindowStyle Hidden -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Installer exit code $($process.ExitCode)" }
+}
+function Launch-App([string]$arguments) {
+    # -Wait waits for descendants too, including the intentionally persistent
+    # collector. Wait only for the launcher process itself.
+    $process = Start-Process -FilePath (Join-Path $installDir 'MarketLens.exe') -ArgumentList $arguments -WorkingDirectory $installDir -WindowStyle Hidden -PassThru
+    if (-not $process.WaitForExit(250000)) { throw 'Launcher did not finish within its startup deadline' }
+    if ($process.ExitCode -ne 0) {
+        Get-Content -LiteralPath (Join-Path $dataDir 'logs\service.log') -Tail 60 -ErrorAction SilentlyContinue
+        throw "Launcher exit code $($process.ExitCode)"
+    }
+}
+function Read-Api([string]$route) { Invoke-RestMethod -Uri ($base + $route) -TimeoutSec 30 }
+$installed = $false
+try {
+    Install-App
+    $installed = $true
+    foreach ($file in @('MarketLens.exe','runtime\node.exe','local\supervisor.mjs','dist\server\wrangler.json','Getting-started.html','unins000.exe')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $installDir $file))) { throw "Missing installed file $file" }
+    }
+    Pass 'Silent installation in a folder containing spaces'
+    if (-not (Test-Path -LiteralPath $registration)) { throw 'Windows uninstall registration is missing' }
+    Pass 'Windows uninstall registration'
+    # Remove developer tools from PATH: the installed launcher must use its own Node.
+    $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+    Launch-App '--background --quiet'
+    $state = Invoke-RestMethod -Uri ($control + '/status') -TimeoutSec 5
+    if ($state.root.TrimEnd('\') -ne $installDir.TrimEnd('\')) { throw 'Wrong service installation root' }
+    if ($state.dataDirectory -ne $dataDir) { throw 'Wrong durable data directory' }
+    Pass 'Bundled-runtime launch without Node/npm on PATH'
+    foreach ($route in @('/','/overall-direction','/trade-confirmation','/local')) {
+        $page = Invoke-WebRequest -Uri ($base + $route) -UseBasicParsing -TimeoutSec 30
+        if ($page.StatusCode -ne 200 -or $page.Content.Length -lt 500) { throw "Page failed: $route" }
+    }
+    Pass 'Market, direction, confirmation and local-status pages'
+    $profile = Read-Api '/api/local/profile'
+    if (@($profile.watchlist).Count -ne 0) { throw 'Installer contained an existing watchlist' }
+    Pass 'Fresh installation contains no user watchlist'
+    Invoke-RestMethod -Uri ($base + '/api/local/profile') -Method Post -ContentType 'application/json' -Body '{"op":"add","symbol":"BTCUSDT"}' | Out-Null
+    $profile = Read-Api '/api/local/profile'
+    if ('BTCUSDT' -notin $profile.watchlist) { throw 'Watchlist write failed' }
+    Pass 'Watchlist write'
+    $active = $null
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $active = Read-Api '/api/local/status'
+        if ($active.running -and $active.collector.startedAt) { break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $active.running -or -not $active.collector.startedAt) { throw 'Background collector did not report activity' }
+    Pass 'Background collector heartbeat without a browser'
+    $started = $active.collector.startedAt
+    Launch-App '--stop --quiet'
+    Launch-App '--background --quiet'
+    if ('BTCUSDT' -notin (Read-Api '/api/local/profile').watchlist) { throw 'Watchlist was lost after restart' }
+    Pass 'Watchlist survives service restart'
+    # Install over a running copy: setup must stop only its own service.
+    Install-App
+    Launch-App '--background --quiet'
+    if ('BTCUSDT' -notin (Read-Api '/api/local/profile').watchlist) { throw 'Watchlist was lost after reinstall' }
+    Pass 'Reinstall/update over a running app preserves watchlist'
+    $backup = Read-Api '/api/local/backup'
+    if (-not $backup) { throw 'Backup endpoint is empty' }
+    Pass 'Local backup endpoint'
+    $process = Start-Process -FilePath (Join-Path $installDir 'unins000.exe') -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -WindowStyle Hidden -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Uninstaller exit code $($process.ExitCode)" }
+    $installed = $false
+    if (Test-Path -LiteralPath (Join-Path $installDir 'MarketLens.exe')) { throw 'Launcher remains after uninstall' }
+    if (Test-Path -LiteralPath $registration) { throw 'Uninstall registration remains' }
+    if (-not (Test-Path -LiteralPath (Join-Path $dataDir 'state'))) { throw 'Uninstaller removed user data' }
+    Pass 'Uninstall removes program and registration while retaining data'
+    if ($originalStatus) {
+        $after = Invoke-RestMethod 'http://127.0.0.1:8788/status' -TimeoutSec 5
+        if ($after.pid -ne $originalStatus.pid) { throw 'Original local service changed during test' }
+        Pass 'Original local service PID unchanged'
+    }
+    $report = @{version=$version;at=(Get-Date).ToUniversalTime().ToString('o');checks=$results;result='PASS'} | ConvertTo-Json -Depth 5
+    $report | Set-Content -LiteralPath (Join-Path $testRoot 'result.json') -Encoding UTF8
+    $report | Set-Content -LiteralPath (Join-Path $testBase 'last-result.json') -Encoding UTF8
+} finally {
+    if ($installed -and (Test-Path -LiteralPath (Join-Path $installDir 'unins000.exe'))) {
+        $cleanup = Start-Process -FilePath (Join-Path $installDir 'unins000.exe') -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -WindowStyle Hidden -Wait -PassThru
+        if ($cleanup.ExitCode -ne 0) { Write-Warning 'Test installation cleanup needs attention.' }
+    }
+    $env:PATH = $originalPath
+    Remove-Item Env:MARKET_LENS_PORT -ErrorAction SilentlyContinue
+    Remove-Item Env:MARKET_LENS_DATA_DIR -ErrorAction SilentlyContinue
+}

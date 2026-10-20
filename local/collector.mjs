@@ -3,9 +3,8 @@ import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {nextCollectionAt} from './cadence.mjs';
 
-export async function runCollector({root,signal:parentSignal,log}){
+export async function runCollector({root,dataDirectory=path.join(root,'data'),origin='http://127.0.0.1:8787',signal:parentSignal,log}){
   const lifetime=new AbortController(),signal=AbortSignal.any([parentSignal,lifetime.signal]);
-  const origin='http://127.0.0.1:8787';
   let rows=[],exchange='',watch=[],lastProfile=0,nextStart=0,scanCooldown=0;
   const attempted=new Map(),pending=new Set();
   const state={startedAt:Date.now(),phase:'Starting collector',marketAt:null,contextAt:null,directionAt:null,nextContextAt:null,contextFeeds:{},scanned:0,loaded:0,failed:0,errors:[]};
@@ -28,7 +27,7 @@ export async function runCollector({root,signal:parentSignal,log}){
     const p=await request('/api/local/profile',undefined,5000);watch=p.watchlist;lastProfile=Date.now();
   }
   async function backup(){
-    const directory=path.join(root,'data','backups');await mkdir(directory,{recursive:true});
+    const directory=path.join(dataDirectory,'backups');await mkdir(directory,{recursive:true});
     const name=`history-${new Date().toISOString().slice(0,10)}.json`;
     const files=await readdir(directory);
     if(files.includes(name))return;

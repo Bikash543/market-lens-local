@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Getting started · Market Lens Local</title>
+<style>body{font:16px/1.65 system-ui,sans-serif;max-width:780px;margin:56px auto;padding:0 24px;color:#20342d;background:#f4f8f6}h1,h2{line-height:1.25}h1{font-size:36px}h2{margin-top:32px;font-size:22px}a{color:#08785b}code{background:#e2eee8;padding:2px 6px;border-radius:4px}.note{padding:18px 22px;background:#e4f1eb;border-left:4px solid #168a67;border-radius:8px}li{margin:8px 0}</style></head>
+<body><h1>Market Lens Local</h1><p>A crypto futures research dashboard running on your Windows PC.</p>
+<h2>Open your dashboard</h2><p>Double-click <strong>Market Lens Local</strong> on the desktop or in the Start menu. The launcher starts the local service and opens Brave, or your default browser. No Node.js installation or commands are needed.</p>
+<p><a href="http://127.0.0.1:8787/">Open dashboard</a> · <a href="http://127.0.0.1:8787/local">Collector status and backups</a></p>
+<h2>Choose what to analyse</h2><ul>
+<li><strong>All Markets:</strong> click Refresh to scan active USDT perpetuals. Use search, filters and 15m/1h timeframes.</li>
+<li><strong>Watchlist:</strong> star coins to save them on this PC.</li>
+<li><strong>Overall Direction:</strong> review 15m, 1h and 4h context. A new installation needs approximately four hours of real observations before a measured 4h bias is available.</li>
+<li><strong>Trade Confirmation:</strong> search for a coin, select it and click Analyse it. Review the reasons and any unavailable inputs.</li>
+</ul>
+<div class="note">The screen changes only when you request new data. Background collection continues after closing the browser while your PC is awake and online. Sleep and shutdown pause collection.</div>
+<h2>Startup, stopping and updates</h2><p>The installer offers automatic collection at Windows sign-in. To stop it now, use <strong>Stop background collection</strong> in the Start menu. To disable sign-in startup, open Windows Startup Apps and disable Market Lens, or remove its shortcut from the Startup folder.</p>
+<p>Download updates from <a href="https://github.com/Bikash543/market-lens-local/releases">GitHub Releases</a> and run the new installer. Automatic updates are not enabled.</p>
+<h2>Your saved data</h2><p>Watchlists, history, backups and logs are stored under <code>%LOCALAPPDATA%\Market Lens Local\data</code>. They are preserved across updates and uninstall. Use <strong>This PC</strong> in the dashboard to download a backup. Uninstall the app through Windows Settings → Apps.</p>
+<h2>If it does not open</h2><p>Wait up to two minutes on the first launch. Only one Market Lens installation may use the default local ports. Stop any earlier source installation before opening this version. Check the service log under <code>%LOCALAPPDATA%\Market Lens Local\data\logs</code> if startup fails.</p>
+<h2>Before using a signal</h2><p>Rule agreement is not a win probability. This app does not execute trades, and no profitability is promised. Exchange outages, regional restrictions and delayed data remain visible. A successful refresh confirms data loading, not a successful trade.</p>
+<p><a href="https://github.com/Bikash543/market-lens-local">Source code and full documentation</a></p>
+</body></html>

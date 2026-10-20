@@ -29,13 +29,13 @@ async function addresses(host){
 const agent=new https.Agent({keepAlive:true,maxSockets:8,lookup(host,options,callback){
   addresses(host).then(values=>options.all?callback(null,values):callback(null,values[0].address,4),error=>callback(error));
 }});
-export async function startExchangeNetwork(log){
+export async function startExchangeNetwork(log,port=8789){
   const server=createServer((req,res)=>{
-    if(req.method!=='GET'||req.headers.host!=='127.0.0.1:8789'||req.headers.origin){
+    if(req.method!=='GET'||req.headers.host!==`127.0.0.1:${port}`||req.headers.origin){
       res.writeHead(403);res.end('Local server requests only');return;
     }
     let url;
-    try{url=allowedURL(new URL(req.url,'http://127.0.0.1:8789').searchParams.get('url')||'')}
+    try{url=allowedURL(new URL(req.url,`http://127.0.0.1:${port}`).searchParams.get('url')||'')}
     catch{res.writeHead(400);res.end('Unsupported public endpoint');return}
     const upstream=https.get(url,{agent,timeout:12000,headers:{Accept:'application/json','User-Agent':'MarketLensLocal/1.0'}},response=>{
       const chunks=[];let bytes=0;
@@ -55,7 +55,7 @@ export async function startExchangeNetwork(log){
     });
     res.on('close',()=>{if(!res.writableEnded)upstream.destroy()});
   });
-  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(8789,'127.0.0.1',resolve)});
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve)});
   log('Exchange network ready: app-only encrypted DNS, verified TLS, fixed public endpoints.');
   return server;
 }

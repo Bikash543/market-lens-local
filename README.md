@@ -4,6 +4,23 @@ A local crypto futures research dashboard for Windows. Screen perpetual markets,
 
 **Manual refresh on screen. Background collection without an open browser. No trading-account connection or order execution.**
 
+## Install on Windows — no commands needed
+
+1. Open [GitHub Releases](https://github.com/Bikash543/market-lens-local/releases/latest).
+2. Download **Market-Lens-Local-Setup-0.2.0-x64.exe** from Assets.
+3. Run the installer and choose whether to create a desktop shortcut and start background collection at Windows sign-in.
+4. Open **Market Lens Local** from your desktop or Start menu.
+
+The installer includes Node.js and the app runtime. No npm, terminal commands, API key or administrator access is required. Supported target: Windows 10 version 2004 or newer / Windows 11, x64. Brave is optional; your default browser works too.
+
+The initial release is **unsigned**, so Windows may display an unknown-publisher or SmartScreen notice. Download only from this repository's release and compare with the published SHA-256 checksum when verifying a file.
+
+Installed app data is stored in `%LOCALAPPDATA%\Market Lens Local\data`, separately from the program files. Updates and uninstall preserve this folder. Use the Start menu's **Stop background collection** shortcut to stop the service; Windows Settings → Apps removes the program. The installer does not automatically update itself.
+
+The first measured 4h bias still requires real history. Keep the PC awake and online for approximately four hours; keeping a browser open is unnecessary.
+
+Developers can use the source installation below. Only run one installation on the default ports at a time.
+
 ## Features
 
 | Workspace | What it does |
@@ -27,7 +44,7 @@ Also includes light/dark themes, desktop and Windows sign-in shortcuts, refresh 
 
 Candles must be closed and relevant timestamps must align. Stale, inconsistent or incomplete observations cannot become confirmed signals. Open-interest growth measures outstanding exposure; it does not identify whether new longs or shorts dominate.
 
-## Requirements
+## Requirements for running from source
 
 - Windows 10/11.
 - Node.js **24 LTS recommended**; the package requires Node 22.13 or newer.
@@ -130,6 +147,8 @@ node local/verify-live.mjs
 ```
 
 This requests real provider data and writes results under `data/verification/`. Availability depends on the network and providers; it is not a strategy backtest.
+
+See [Windows installer build instructions](installer/README.md) for packaging and isolated installation tests.
 
 ## Limits
 
