@@ -1,0 +1,1 @@
+ALTER TABLE `dominance` ADD `source` text DEFAULT 'CoinGecko' NOT NULL;

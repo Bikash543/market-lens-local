@@ -1,0 +1,148 @@
+# Market Lens Local
+
+A local crypto futures research dashboard for Windows. Screen perpetual markets, review broader altcoin direction, and analyse a selected trade setup while a separate background collector maintains market history on your PC.
+
+**Manual refresh on screen. Background collection without an open browser. No trading-account connection or order execution.**
+
+## Features
+
+| Workspace | What it does |
+| --- | --- |
+| All Markets | Screens active USDT perpetual contracts using price/trend, open interest, funding, taker flow and dominance context. Supports 15-minute and 1-hour analysis, search, sorting, pagination and scan progress. |
+| Watchlist | Saves starred coins to local SQLite storage. The same watchlist is available across browsers, and watched coins receive background scan priority. |
+| Overall Direction | Combines altcoin breadth, market-cap basket estimates, BTC direction and stablecoin-share changes across 15m, 1h and 4h windows. Preserves the displayed snapshot and selected settings across navigation. |
+| Trade Confirmation | Search an active OKX coin, select a direction, then explicitly click **Analyse it**. Shows evidence, entry/stop/target references, reasons, missing inputs and exportable results. |
+| Data health | Explains unavailable feeds, stale observations, signal checks and provider coverage. |
+| This PC | Shows collector status, history readiness, watchlist import and a downloadable local backup. |
+
+Also includes light/dark themes, desktop and Windows sign-in shortcuts, refresh loading indicators, success notifications after rendering, and clear partial/failure notifications.
+
+## Data and signal rules
+
+- **Main screener:** Binance USDⓈ-M USDT perpetuals are preferred. OKX crypto USDT perpetuals are a clearly labelled fallback. Analyses identify their exchange and use that exchange's inputs.
+- **Market direction:** CoinLore observations provide a top-125 market basket. Stablecoin exclusions, coverage thresholds and matching observation windows are applied. Basket estimates are **not** TradingView's licensed TOTAL3ES, TOTAL2ES, BTC.D or USDT.D indices.
+- **Global dominance:** CoinPaprika is preferred, with CoinGecko fallback. Provider-specific history is kept separate.
+- **Supporting context and Trade Confirmation:** OKX closed candles, open-interest statistics and spot-flow samples. Missing inputs remain unavailable.
+- **Signals:** Rule agreement is an evidence score, not a win probability. These experimental rules have no validated profitability claim.
+
+Candles must be closed and relevant timestamps must align. Stale, inconsistent or incomplete observations cannot become confirmed signals. Open-interest growth measures outstanding exposure; it does not identify whether new longs or shorts dominate.
+
+## Requirements
+
+- Windows 10/11.
+- Node.js **24 LTS recommended**; the package requires Node 22.13 or newer.
+- npm, bundled with Node.js.
+- Internet access for public market-data APIs.
+- Brave is optional; the launcher uses it when available and otherwise opens the default browser.
+
+No exchange API key, trading account or Cloudflare login is required for local operation. Install Node from its official distribution and ensure `node` is available on PATH.
+
+## Install and run
+
+Clone this repository or extract its source into a permanent folder. Open PowerShell there:
+
+```powershell
+npm run install:ci
+npm run build
+powershell -NoProfile -ExecutionPolicy Bypass -File .\local\Install-Shortcuts.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\local\Start-MarketLens.ps1 -OpenBrowser
+```
+
+The shortcut installer creates:
+
+- **Market Lens Local** on your desktop.
+- **Market Lens Local Background** in your Windows Startup folder.
+
+The latter starts collection at **Windows sign-in**, without opening a browser. The scripts do not require an administrator account. `ExecutionPolicy Bypass` above applies only to that PowerShell invocation.
+
+Open **http://127.0.0.1:8787/**. Status and backups are at **http://127.0.0.1:8787/local**.
+
+To run in the foreground without installing shortcuts:
+
+```powershell
+npm start
+```
+
+Only run one installation at a time; installations use the same local ports.
+
+## Manual refresh and background collection
+
+Navigation, timeframe changes and refocusing the browser do not trigger provider refreshes. Click **Refresh** to update a workspace or **Analyse it** to analyse the selected coin. Success appears after the requested results render; partial requests are labelled accordingly. A fresh Overall Direction session can read observations already stored locally.
+
+Independently, the background service collects:
+
+- Market quotes approximately every minute.
+- Direction, dominance and supporting context approximately every five minutes.
+- Individual 15m/1h contract analyses in a paced rotation, prioritising the watchlist.
+
+Closing Brave does not stop the service. **Sleep, shutdown or loss of connectivity interrupts collection.** The collector resumes when the PC is running and connected; it never invents missed history.
+
+A new installation starts with an empty watchlist and no saved history. The first measured 4h reading needs approximately four hours of observations, with suitable coverage and matching timestamps. Until then it displays **COLLECTING**. Provider delays can extend the wait.
+
+See [manual refresh behaviour](MANUAL-REFRESH.md) and [local operations](LOCAL-README.md).
+
+## Storage and privacy
+
+| Path | Contents |
+| --- | --- |
+| `data/state/` | Durable local database: settings, watchlist, observations and cached analyses |
+| `data/backups/` | Daily JSON backups; up to 14 daily backups retained |
+| `data/logs/` | Local service diagnostics |
+| `data/verification/` | Locally generated verification output |
+
+The entire `data/` directory is ignored by Git. This repository contains **source code only**, not an existing user's watchlist, market-history database, screenshots, logs or credentials.
+
+The application, supervisor and public exchange transport bind to loopback ports **8787, 8788 and 8789**. Do not expose them through port forwarding. Public providers still receive market-data requests.
+
+The exchange transport uses Cloudflare DNS-over-HTTPS for two fixed exchange hosts and retains TLS hostname verification. It does not change system DNS or rotate hosts to evade rate limits. Public endpoint allowlists, bounded requests and shared cooldowns limit upstream access.
+
+## Stop, update and remove startup
+
+Stop the service before rebuilding:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\local\Stop-MarketLens.ps1
+git pull --ff-only
+npm run install:ci
+npm run build
+```
+
+Then open the desktop shortcut. Keep `data/state/` when updating to preserve your watchlist and history.
+
+To disable sign-in startup, open `shell:startup` through **Win+R** and remove **Market Lens Local Background.lnk**. This does not remove saved data. The desktop shortcut can still start the service manually.
+
+## Development and verification
+
+Built with TypeScript, React, Vinext/Vite and Wrangler's local Cloudflare Worker/D1 runtime. The schema is initialised by the local worker on first API access.
+
+```powershell
+npm run typecheck
+npm test
+npm run build
+```
+
+Tests cover signal gates, closed-candle/flow alignment, caching and cooldowns, manual scans, direction persistence, collection cadence, refresh outcomes, symbol validation and local transport restrictions.
+
+Optional live-feed verification, after starting the local service:
+
+```powershell
+node local/verify-live.mjs
+```
+
+This requests real provider data and writes results under `data/verification/`. Availability depends on the network and providers; it is not a strategy backtest.
+
+## Limits
+
+This is a research application. It does not place trades or manage an account. A completed refresh means data was loaded, not that a trade is profitable. Illustrative trade plans are conditional and expire; fee, slippage and funding assumptions must be reviewed before using any plan.
+
+Liquidation heatmaps, news and token-unlock feeds are not connected. Market-wide spot CVD and licensed index structure are not replaced by similarly named approximations. Public APIs can rate-limit, delay or reject requests; those states remain visible.
+
+## Data-provider documentation
+
+- [Binance USDⓈ-M market data](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api)
+- [OKX API documentation](https://www.okx.com/docs-v5/en/)
+- [CoinLore cryptocurrency API](https://www.coinlore.com/cryptocurrency-data-api)
+- [CoinPaprika global data](https://docs.coinpaprika.com/api-reference/global/get-market-overview-data)
+- [CoinGecko global data](https://docs.coingecko.com/reference/crypto-global)
+
+Third-party dependencies retain their respective licences. The bundled stylesheet attribution is preserved in `vendor/`.
