@@ -1,49 +1,15 @@
-import {env} from 'cloudflare:workers';
+import {sharedOKX,sharedOKXCandles,sharedFeedCache} from './shared-feeds';
 import {market as localBroadMarket,scope as broadScope} from './local-compass/data';
-import {createFeedCache,deadline} from './feed-cache';
-import {upstreamJSON,type RequestGate} from './upstream';
 import {bars,evaluate,Q,H,type Inputs,type Side} from './confirmation';
 import {confirmationMarkets} from './confirmation-symbols';
 import {applyDirectInputs,type DirectBundle} from './confirmation-direct';
-const ORIGIN='https://openapi.okx.com';
-const gate:RequestGate={
-  reserve:async(key,spacing,maxQueue)=>{
-    const now=Date.now();
-    const result=await env.DB!.prepare("INSERT INTO feed_cache (key,body,expires) VALUES (?,'{}',?) ON CONFLICT(key) DO UPDATE SET expires=MAX(?,feed_cache.expires)+? WHERE feed_cache.expires<=? RETURNING expires").bind(`rate:v1:${key}`,now+spacing,now,spacing,now+maxQueue).first<{expires:number}>();
-    if(result)return result.expires-spacing;
-    const saved=await env.DB!.prepare('SELECT expires FROM feed_cache WHERE key=?').bind(`rate:v1:${key}`).first<{expires:number}>();
-    return saved?{retryAfterMs:saved.expires-now}:null;
-  },
-  defer:async(key,until)=>env.DB!.prepare("INSERT INTO feed_cache (key,body,expires) VALUES (?,'{}',?) ON CONFLICT(key) DO UPDATE SET expires=MAX(feed_cache.expires,excluded.expires)").bind(`rate:v1:${key}`,until).run()
-};
-const cache=createFeedCache({
-  read:async key=>env.DB!.prepare('SELECT body,expires FROM feed_cache WHERE key=?').bind(key).first(),
-  write:async(key,v)=>env.DB!.prepare('INSERT INTO feed_cache (key,body,expires) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body,expires=excluded.expires').bind(key,v.body,v.expires).run(),
-  acquire:async(key,owner)=>!!await env.DB!.prepare('INSERT INTO feed_cache (key,body,expires) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body,expires=excluded.expires WHERE feed_cache.expires<=? RETURNING key').bind(`lease:${key}`,owner,Date.now()+18000,Date.now()).first(),
-  release:async(key,owner)=>env.DB!.prepare('DELETE FROM feed_cache WHERE key=? AND body=?').bind(`lease:${key}`,owner).run()
-},1200);
-export const scope=cache.scope;
+export const scope=sharedFeedCache.scope;
 async function get(path:string,ttl:number|((value:any[])=>number)=45000,timeoutMs=7500):Promise<any[]>{
-  return cache.get(`confirmation:v1:${path}`,ttl,async()=>{
-    const raw=await upstreamJSON(ORIGIN+path,{gate,timeoutMs,attempts:1});
-    if(!Array.isArray(raw.data))throw new Error('Exchange returned an invalid series');
-    return raw.data;
-  },{staleMs:90000,onStale:value=>value});
+  // Preserve the original bounded fallback; evaluate() still checks source times.
+  return sharedOKX(path,ttl,timeoutMs,90000);
 }
 async function closedCandles(symbol:string,bar:'15m'|'1H',step:number){
-  const ttl=(rows:any[])=>{
-    const last=Math.max(0,...rows.filter(v=>v[8]==='1').map(v=>+v[0]+step));
-    // Reuse the closed series until the next candle can be published. Late
-    // publication gets a short retry rather than a full-interval stale cache.
-    return Math.max(15000,Math.min(step,last+step+5000-Date.now()));
-  };
-  const query=`?instId=${symbol}-USDT-SWAP&bar=${bar}&limit=100`;
-  try{return bars(await get('/api/v5/market/candles'+query,ttl,5000),step)}
-  catch{
-    // Same exchange and instrument, using its documented history endpoint.
-    // It has its own paced quota and cooldown; no host/IP rotation or retry loop.
-    return bars(await get('/api/v5/market/history-candles'+query,ttl,5000),step);
-  }
+  return bars(await sharedOKXCandles(symbol,bar,100),step);
 }
 const message=(e:unknown)=>(e instanceof Error?e.message:'Provider unavailable').replace(/automatic retry scheduled/gi,'click Analyse it after the cooldown to retry');
 async function broadMarket(){return broadScope(()=>localBroadMarket())}
@@ -77,3 +43,4 @@ export async function analyze(symbol:string,requested:'AUTO'|Side,direct?:Direct
   const selected=requested==='LONG'?long:requested==='SHORT'?short:long.verdict==='LONG SETUP'?long:short.verdict==='SHORT SETUP'?short:short.passed>long.passed?short:long;
   return {...selected,selection:requested,alternative:{side:selected.side==='LONG'?'SHORT':'LONG',passed:selected.side==='LONG'?short.passed:long.passed}};
 }
+

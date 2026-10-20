@@ -2,12 +2,13 @@ import {mkdir,writeFile,rename,readdir,unlink} from 'node:fs/promises';
 import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {nextCollectionAt} from './cadence.mjs';
+import {recoverHistory} from './recover-history.mjs';
 
 export async function runCollector({root,dataDirectory=path.join(root,'data'),origin='http://127.0.0.1:8787',signal:parentSignal,log}){
   const lifetime=new AbortController(),signal=AbortSignal.any([parentSignal,lifetime.signal]);
-  let rows=[],exchange='',watch=[],lastProfile=0,nextStart=0,scanCooldown=0;
-  const attempted=new Map(),pending=new Set();
-  const state={startedAt:Date.now(),phase:'Starting collector',marketAt:null,contextAt:null,directionAt:null,nextContextAt:null,contextFeeds:{},scanned:0,loaded:0,failed:0,errors:[]};
+  let rows=[],exchange='',watch=[],lastProfile=0,scanCooldown=0;
+  const attempted=new Map(),pending=new Set(),due=new Map();
+  const state={startedAt:Date.now(),phase:'Starting collector',marketAt:null,contextAt:null,directionAt:null,nextContextAt:null,contextFeeds:{},scanned:0,loaded:0,failed:0,reused:0,recovery:null,errors:[]};
   const pause=ms=>sleep(ms,undefined,{signal}).catch(()=>{});
   function failure(label,e){
     const text=`${new Date().toISOString()} · ${label}: ${e.message||e}`;
@@ -46,15 +47,26 @@ export async function runCollector({root,dataDirectory=path.join(root,'data'),or
         const market=await request('/api/market');
         if(!market.stale&&market.rows?.length){rows=market.rows;exchange=market.exchange;state.marketAt=market.updated}
         await profile();
+        // One bulk read per horizon refreshes funding independently and skips
+        // already completed candle windows, including after service restarts.
+        for(const interval of ['15m','1h']){
+          if(signal.aborted||!rows.length)break;
+          const saved=await request('/api/local/snapshot',{exchange,interval,symbols:rows.map(r=>r.symbol),background:true});
+          const step=interval==='15m'?900000:3600000;
+          for(const symbol of saved.reused??[])due.set(`${exchange}:${symbol}:${interval}`,Math.floor(Date.now()/step)*step+step+15000);
+          state.reused+=(saved.reused??[]).length;
+        }
       }catch(e){if(!signal.aborted)failure('Market snapshot',e)}
       next=nextCollectionAt(next,60000);
     }
   }
   async function contexts(){
-    let next=Date.now();
+    let next=Date.now(),lastCycle=0;
     while(!signal.aborted){
       state.nextContextAt=next;
       await pause(Math.max(0,next-Date.now()));if(signal.aborted)break;
+      if(!lastCycle||Date.now()-lastCycle>600000)state.recovery=await recoverHistory(dataDirectory,request,log);
+      lastCycle=Date.now();
       // Market history has its own cadence, independent of quote/scan failures.
       // Fetch it first; optional context cannot delay the four-hour baseline.
       for(const route of ['/api/direction','/api/global','/api/direction?kind=btc','/api/direction?kind=oi','/api/direction?kind=flow']){
@@ -80,22 +92,21 @@ export async function runCollector({root,dataDirectory=path.join(root,'data'),or
     const now=Date.now(),jobs=[];
     for(const row of rows)for(const interval of ['15m','1h']){
       const key=`${exchange}:${row.symbol}:${interval}`,previous=attempted.get(key)||0;
-      if(pending.has(key)||now-previous<(watch.includes(row.symbol)?180000:480000))continue;
+      if(pending.has(key)||now<(due.get(key)||0)||now-previous<60000)continue;
       jobs.push({key,symbol:row.symbol,interval,exchange,previous,watched:watch.includes(row.symbol)});
     }
-    jobs.sort((a,b)=>Number(b.watched)-Number(a.watched)||a.previous-b.previous);
+    // Waiting age eventually outweighs watchlist priority.
+    jobs.sort((a,b)=>(Number(b.watched)*120000+(now-b.previous))-(Number(a.watched)*120000+(now-a.previous)));
     const job=jobs[0];if(job){pending.add(job.key);attempted.set(job.key,now)}return job;
   }
   async function scanLoop(){
     while(!signal.aborted){
       if(Date.now()<scanCooldown){await pause(Math.min(5000,scanCooldown-Date.now()));continue}
       const job=nextJob();if(!job){await pause(2000);continue}
-      const at=Math.max(Date.now(),nextStart);nextStart=at+1600;
-      await pause(Math.max(0,at-Date.now()));
       if(signal.aborted){pending.delete(job.key);break}
       state.phase=`Collecting ${job.symbol} ${job.interval}`;
       try{
-        const result=await request('/api/scan',{exchange:job.exchange,symbols:[job.symbol],interval:job.interval},22000);
+        const result=await request('/api/scan',{exchange:job.exchange,symbols:[job.symbol],interval:job.interval,background:true},55000);
         const row=result.rows?.[0];
         if(row?.error&&/rate limit|cooling down|queue is busy/i.test(row.error)){
           // Let the shared exchange endpoint recover instead of walking every
@@ -104,6 +115,8 @@ export async function runCollector({root,dataDirectory=path.join(root,'data'),or
           state.phase='Exchange cooldown; collection resumes automatically';
         }
         if(!row||row.error)throw new Error(row?.error||'No analysis returned');
+        const step=job.interval==='15m'?900000:3600000,boundary=Math.floor(Date.now()/step)*step;
+        due.set(job.key,row.closedAt===boundary-1?boundary+step+15000:Date.now()+60000);
         state.loaded++;
       }catch(e){state.failed++;if(!signal.aborted)failure(`${job.symbol} ${job.interval}`,e)}
       finally{state.scanned++;pending.delete(job.key)}

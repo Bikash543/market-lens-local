@@ -13,7 +13,7 @@ export function deadline<T>(work:Promise<T>,ms:number,message='Request timed out
   return Promise.race([work,timeout]).finally(()=>clearTimeout(timer));
 }
 
-export function createFeedCache(storage?:Storage,storageMs=700){
+export function createFeedCache(storage?:Storage,storageMs=700,sharedWaitMs=3500){
   // Only resolved JSON belongs in isolate-wide state. Cloudflare I/O promises
   // belong to their originating request and must never be reused by another.
   const memory=new Map<string,CacheBox>();
@@ -51,7 +51,7 @@ export function createFeedCache(storage?:Storage,storageMs=700){
           if(acquired)owner=token;
           if(acquired===false){
             if(options.waitForShared===false)throw new Error('Another request is refreshing this feed');
-            const end=Date.now()+3500;
+            const end=Date.now()+sharedWaitMs;
             while(Date.now()<end){
               await new Promise(resolve=>setTimeout(resolve,200));
               const shared=await deadline(storage.read(key),storageMs,'Shared refresh timed out');

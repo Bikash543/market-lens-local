@@ -41,7 +41,7 @@ $installed = $false
 try {
     Install-App
     $installed = $true
-    foreach ($file in @('MarketLens.exe','runtime\node.exe','local\supervisor.mjs','dist\server\wrangler.json','Getting-started.html','unins000.exe')) {
+    foreach ($file in @('MarketLens.exe','runtime\node.exe','local\supervisor.mjs','local\work-queue.mjs','local\recover-history.mjs','dist\server\wrangler.json','Getting-started.html','unins000.exe')) {
         if (-not (Test-Path -LiteralPath (Join-Path $installDir $file))) { throw "Missing installed file $file" }
     }
     Pass 'Silent installation in a folder containing spaces'
@@ -74,6 +74,16 @@ try {
     }
     if (-not $active.running -or -not $active.collector.startedAt) { throw 'Background collector did not report activity' }
     Pass 'Background collector heartbeat without a browser'
+    $queueBefore = (Invoke-RestMethod -Uri ($control + '/status') -TimeoutSec 5).queue
+    if ($null -eq $queueBefore) { throw 'Shared scan queue status is missing' }
+    $scan = Invoke-RestMethod -Uri ($base + '/api/scan') -Method Post -ContentType 'application/json' -Body '{"exchange":"Binance","interval":"1h","symbols":["ETHUSDT"],"summary":true,"selected":true}' -TimeoutSec 60
+    $row = $scan.rows[0]
+    if ($row.symbol -ne 'ETHUSDT' -or $row.error -or @($row.candles).Count -ne 0) { throw ('Compact scan failed: ' + ($row | ConvertTo-Json -Compress)) }
+    $detail = Read-Api ("/api/local/analysis-detail?exchange=Binance&symbol=ETHUSDT&interval=1h&closedAt=" + $row.closedAt)
+    if ($detail.closedAt -ne $row.closedAt -or @($detail.candles).Count -lt 35) { throw 'Saved chart version does not match compact row' }
+    $queueAfter = (Invoke-RestMethod -Uri ($control + '/status') -TimeoutSec 5).queue
+    if ($queueAfter.submitted -lt 1) { throw 'Isolated installer scan queue did not receive work' }
+    Pass 'New shared queue and exact-version compact chart API on isolated installer ports'
     $started = $active.collector.startedAt
     Launch-App '--stop --quiet'
     Launch-App '--background --quiet'

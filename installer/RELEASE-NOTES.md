@@ -1,6 +1,15 @@
-# Market Lens Local 0.2.0 — Windows installer
+# Market Lens Local 0.3.0 — Faster manual refresh and background collection
 
-Download **Market-Lens-Local-Setup-0.2.0-x64.exe** below, run it, and open **Market Lens Local** from the desktop or Start menu.
+Download **Market-Lens-Local-Setup-0.3.0-x64.exe** below, run it, and open **Market Lens Local** from the desktop or Start menu.
+
+## Improved in this release
+
+- Bulk reuse of current closed-candle analyses, with fresh funding validation.
+- Candle-aware background scheduling and a shared, bounded scan queue with deduplication, manual-request priority and starvation protection.
+- Shared OKX data caches across compatible features; spot and futures flow remain separate.
+- Compact market rows, batched screen updates and exact-version chart data loaded on selection.
+- Recovery of genuine saved observations at startup or after sleep, plus official candle-history fallback.
+- Existing manual refresh, watchlists, 15m/1h analyses, 4h context, themes and all workspaces are retained. Signal formulas and thresholds are unchanged.
 
 ## Included
 
@@ -25,13 +34,13 @@ Only one Market Lens installation may use the default local ports. Stop an exist
 
 ## Verification
 
-- 98 automated tests passed.
+- 107 automated tests passed, including seven-coin/two-timeframe signal parity, freshness rejection, queue deduplication, fairness and timeouts.
 - TypeScript check and production build passed.
 - Actual installer tested in an isolated directory, using the bundled Node runtime with developer Node/npm removed from PATH.
 - Verified application pages, collector heartbeat without a browser, watchlist persistence after restart and reinstall, backup access, and uninstall with user-data retention.
 
 ## Signing and limitations
 
-This initial installer is **unsigned**. Windows may show an unknown-publisher or SmartScreen notice. Obtain it from this repository's release and use `SHA256SUMS.txt` to verify the artifact when needed; a checksum is not a code-signing certificate.
+This installer is **unsigned**. Windows may show an unknown-publisher or SmartScreen notice. Obtain it from this repository's release and use `SHA256SUMS.txt` to verify the artifact when needed; a checksum is not a code-signing certificate.
 
 Signals are research rules, not a win probability or a profit guarantee. Public market-data providers can be unavailable or delayed. The app does not execute orders or connect to a trading account.

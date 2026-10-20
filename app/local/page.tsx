@@ -48,6 +48,8 @@ export default function LocalStatus(){
       <p>Saved in a local SQLite database. Browser data clearing does not erase your watchlist. Open or reload All Markets after importing.</p>
       <a href="/api/local/backup" download="market-lens-backup.json">Download settings and history backup</a>
       <h2>Background scan</h2>
+      <p>Saved candle windows reused: {status.collector?.reused??0}. New windows are scheduled after their close; funding is checked independently.</p>
+      {status.collector?.recovery&&<p>Last history recovery: {new Date(status.collector.recovery.at).toLocaleString()} · {status.collector.recovery.restored} original observations restored. Exchange candle history fills available price gaps. Missing CoinLore intraday observations cannot be reconstructed and remain unavailable.</p>}
       <p>{status.collector?.phase||'Starting'} · Watchlist coins have priority; all active contracts are scanned in a paced rotation on 15m and 1h.</p>
       <ul>{status.counts.map((r:any)=><li key={r.exchange+r.interval}>{r.exchange} {r.interval}: {r.loaded} loaded / {r.checked} checked</li>)}</ul>
       {!!status.collector?.errors?.length&&<details><summary>Recent feed errors</summary><ul>{status.collector.errors.map((e:any,i:number)=><li key={i}>{e}</li>)}</ul></details>}

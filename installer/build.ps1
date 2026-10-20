@@ -43,7 +43,7 @@ try {
     Assert-NativeSuccess 'Runtime installation'
 } finally { Pop-Location }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'dist') -Destination $stage -Recurse
-foreach ($name in @('supervisor.mjs','collector.mjs','exchange-network.mjs','cadence.mjs','runtime-config.mjs','desktop-command.mjs')) {
+foreach ($name in @('supervisor.mjs','collector.mjs','exchange-network.mjs','cadence.mjs','work-queue.mjs','recover-history.mjs','runtime-config.mjs','desktop-command.mjs')) {
     Copy-Item -LiteralPath (Join-Path $repoRoot "local\$name") -Destination (Join-Path $stage 'local')
 }
 foreach ($name in @('sites-env.mjs','tool-environment.mjs')) {

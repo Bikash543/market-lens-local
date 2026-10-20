@@ -7,13 +7,13 @@ A local crypto futures research dashboard for Windows. Screen perpetual markets,
 ## Install on Windows — no commands needed
 
 1. Open [GitHub Releases](https://github.com/Bikash543/market-lens-local/releases/latest).
-2. Download **Market-Lens-Local-Setup-0.2.0-x64.exe** from Assets.
+2. Download **Market-Lens-Local-Setup-0.3.0-x64.exe** from Assets.
 3. Run the installer and choose whether to create a desktop shortcut and start background collection at Windows sign-in.
 4. Open **Market Lens Local** from your desktop or Start menu.
 
 The installer includes Node.js and the app runtime. No npm, terminal commands, API key or administrator access is required. Supported target: Windows 10 version 2004 or newer / Windows 11, x64. Brave is optional; your default browser works too.
 
-The initial release is **unsigned**, so Windows may display an unknown-publisher or SmartScreen notice. Download only from this repository's release and compare with the published SHA-256 checksum when verifying a file.
+The installer is **unsigned**, so Windows may display an unknown-publisher or SmartScreen notice. Download only from this repository's release and compare with the published SHA-256 checksum when verifying a file.
 
 Installed app data is stored in `%LOCALAPPDATA%\Market Lens Local\data`, separately from the program files. Updates and uninstall preserve this folder. Use the Start menu's **Stop background collection** shortcut to stop the service; Windows Settings → Apps removes the program. The installer does not automatically update itself.
 
@@ -33,6 +33,17 @@ Developers can use the source installation below. Only run one installation on t
 | This PC | Shows collector status, history readiness, watchlist import and a downloadable local backup. |
 
 Also includes light/dark themes, desktop and Windows sign-in shortcuts, refresh loading indicators, success notifications after rendering, and clear partial/failure notifications.
+
+## Efficiency improvements in 0.3.0
+
+- Reuses current closed-candle analyses in one bulk check; funding remains independently fresh.
+- Shares a bounded, deduplicated scan queue between manual requests and background collection.
+- Shares compatible OKX feeds across workspaces while keeping spot and futures flow separate.
+- Sends compact table results and reads the exact saved chart version only when selected.
+- Batches scan updates for a more responsive interface.
+- Recovers original saved observations after startup or sleep and repairs candle coverage from official history endpoints. Missing intraday observations are never fabricated.
+
+The signal rules are unchanged. Manual refresh, watchlists, themes, all workspaces and browser-independent collection remain available.
 
 ## Data and signal rules
 
@@ -90,7 +101,7 @@ Independently, the background service collects:
 
 - Market quotes approximately every minute.
 - Direction, dominance and supporting context approximately every five minutes.
-- Individual 15m/1h contract analyses in a paced rotation, prioritising the watchlist.
+- Individual 15m/1h contract analyses after candle closes, sharing a paced queue with manual requests and prioritising the watchlist. Current analyses are reused with fresh funding checks.
 
 Closing Brave does not stop the service. **Sleep, shutdown or loss of connectivity interrupts collection.** The collector resumes when the PC is running and connected; it never invents missed history.
 

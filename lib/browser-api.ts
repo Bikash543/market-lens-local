@@ -3,7 +3,7 @@ export class APIError extends Error{
   constructor(message:string,retryAfterMs=15000){super(message);this.retryAfterMs=retryAfterMs}
 }
 export async function api(path:string,body?:unknown,signal?:AbortSignal){
-  const timeout=AbortSignal.timeout(19000);
+  const timeout=AbortSignal.timeout(path==='/api/scan'?55000:19000);
   let r:Response;
   try{
     r=await fetch(path,{...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{}),cache:'no-store',signal:signal?AbortSignal.any([signal,timeout]):timeout});

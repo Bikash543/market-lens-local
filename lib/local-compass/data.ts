@@ -1,3 +1,4 @@
+import {sharedOKX,sharedOKXCandles} from '../shared-feeds';
 import { env, waitUntil } from 'cloudflare:workers';
 import { createFeedCache, deadline } from './feed-cache';
 import { upstreamJSON, type RequestGate } from '../upstream';
@@ -18,7 +19,7 @@ const cache=createFeedCache({
   write:async(key,v)=>env.DB!.prepare('INSERT INTO feed_cache (key,body,expires) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body,expires=excluded.expires').bind(key,v.body,v.expires).run(),
   acquire:async(key,owner)=>!!await env.DB!.prepare('INSERT INTO feed_cache (key,body,expires) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body,expires=excluded.expires WHERE feed_cache.expires<=? RETURNING key').bind(`lease:${key}`,owner,Date.now()+18000,Date.now()).first(),
   release:async(key,owner)=>env.DB!.prepare('DELETE FROM feed_cache WHERE key=? AND body=?').bind(`lease:${key}`,owner).run()
-},1500);
+},1500,15000);
 export const scope=cache.scope;
 const err=(e:unknown)=>e instanceof Error&& !/internal error; reference/.test(e.message)?e.message:'Provider connection temporarily unavailable';
 export async function market(){
@@ -64,17 +65,12 @@ export async function historyStatus(){
   return {checkedAt:now,cadenceMinutes:5,retentionHours:24,observations:rows?.count??0,firstObservationAt:rows?.first??null,latestObservationAt:rows?.latest??null,fourHour:{asOf:four?.at??null,baselineMinutes:four?.baselineMinutes??null,usable:validFourContext(four,now),expiresAt:four?four.at+FOUR_CONTEXT_AGE:null},note:'Collection is scheduled every five minutes on this PC. Provider failures or gaps can delay the baseline. Browser reads also refresh observations.'};
 }
 async function okx(path:string,ttl:number|((value:any[])=>number)=120000,timeoutMs=7000):Promise<any[]>{
-  return cache.get(path,ttl,async()=>{
-    const result=await upstreamJSON('https://openapi.okx.com'+path,{gate,timeoutMs,attempts:1});
-    if(!Array.isArray(result.data))throw new Error('Malformed OKX response');
-    return result.data;
-  });
+  return sharedOKX(path,ttl,timeoutMs);
 }
 export async function btcContext(){
-  const untilClose=(step:number)=>(raw:any[])=>{const rows=candles(raw,step);return Math.max(15000,rows.at(-1)!.t+2*step+30000-Date.now())};
   return cache.get('btc:structure:v2',v=>Math.max(15000,Math.min(300000,v.quarterClose+900000+30000-Date.now())),async()=>{
-    const h=candles(await okx('/api/v5/market/history-candles?instId=BTC-USDT-SWAP&bar=1H&limit=80',untilClose(3600000)),3600000);
-    const q=candles(await okx('/api/v5/market/history-candles?instId=BTC-USDT-SWAP&bar=15m&limit=80',untilClose(900000)),900000);
+    const h=candles(await sharedOKXCandles('BTC','1H',80),3600000);
+    const q=candles(await sharedOKXCandles('BTC','15m',80),900000);
     return {at:Date.now(),hour:structure(h),quarter:breakout(q),hourClose:h.at(-1)!.t+3600000,quarterClose:q.at(-1)!.t+900000,source:'OKX BTC-USDT perpetual, closed candles',note:'BTC structure only. Altcoin-index breakout/retest is not connected.'};
   });
 }

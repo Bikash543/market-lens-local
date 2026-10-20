@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
-import {saveAnalysis} from './local-store';
+import {sharedOKX,sharedOKXCandles} from './shared-feeds';
+import {reusableAnalysis} from './analysis-reuse';
 import { analyze } from './engine';
 import { normalizeOKX } from './okx';
 import { createFeedCache, deadline } from './feed-cache';
@@ -44,7 +45,7 @@ const cache=feedCache.get;
 export const feedScope=feedCache.scope;
 const staleMarket={staleMs:90000,onStale:(value:any,error:Error)=>({...value,stale:true,refreshError:error.message})};
 let forcedFallback:{until:number;reason:string}|undefined;
-async function okx(path:string){const d=await json(OKX+path);if(!Array.isArray(d.data))throw new Error('Unexpected OKX response');return d.data}
+async function okx(path:string){return sharedOKX(path,path.includes('/instruments?')?3600000:30000)}
 // Preserve successful components if a different component is briefly unavailable.
 const okxRecent=(path:string)=>cache(`okx:recent:v1:${path}`,30000,()=>okx(path));
 async function chooseVenue(){return cache('venue:v4',900000,async()=>{
@@ -116,7 +117,21 @@ export async function globalMarket(){return cache('global:v4',300000,async()=>{
   const baseline=[...history].reverse().find(x=>x.time<=time-3300000&&x.time>=time-4500000);
   return {btc,usdt,updated:time,btcChange:baseline?btc-baseline.btc:null,usdtChange:baseline?usdt-baseline.usdt:null,baseline:baseline?.time??null,history,marketCap,source,historyError};
 })}
-export async function scan(symbol:string,interval:string,exchange:Venue){return cache(`scan:v4:${exchange}:${symbol}:${interval}`,60000,async()=>{
+export async function reuseSavedScan(symbol:string,interval:string,exchange:Venue){
+  const saved=await env.DB!.prepare('SELECT body,error FROM local_analyses WHERE exchange=? AND symbol=? AND interval=?').bind(exchange,symbol,interval).first<{body:string|null;error:string|null}>();
+  if(saved?.body&&!saved.error){
+    try{
+      const quotes:any=await market();
+      const quote=!quotes.stale&&quotes.exchange===exchange?quotes.rows.find((r:any)=>r.symbol===symbol):undefined;
+      const reuse=reusableAnalysis(JSON.parse(saved.body),quote,exchange,interval);
+      if(reuse)return reuse;
+    }catch{/* An unavailable bulk quote does not prevent a direct venue scan. */}
+  }
+  return null;
+}
+export async function scan(symbol:string,interval:string,exchange:Venue){return cache(`scan:v5:${exchange}:${symbol}:${interval}`,(v:any)=>Math.min(60000,windowCacheMs(interval,v.closedAt)),async()=>{
+  const reuse=await reuseSavedScan(symbol,interval,exchange);
+  if(reuse)return reuse;
   let k:any[],oi:any[],dataNote:string|undefined,funding:number,instrument:string;
   if(exchange==='OKX'){
     instrument=symbol.slice(0,-4)+'-USDT-SWAP';
@@ -126,7 +141,7 @@ export async function scan(symbol:string,interval:string,exchange:Venue){return 
       cache(`window:v1:OKX:${symbol}:${interval}`,(v:ReturnType<typeof normalizeOKX>)=>windowCacheMs(interval,v.raw.at(-1)?.[6]??0),async()=>{
         // Candles are the dependency for both other series. Do not spend their
         // quotas if the candle endpoint is already cooling down.
-        const bars=await okxRecent(`/api/v5/market/candles?${query}&bar=${period}&limit=99`);
+        const bars=await sharedOKXCandles(symbol.slice(0,-4),period,99);
         const [flow,interest]=await Promise.all([
           okxRecent(`/api/v5/rubik/stat/taker-volume-contract?${query}&period=${period}&unit=2&limit=100`),
           okxRecent(`/api/v5/rubik/stat/contracts/open-interest-history?${query}&period=${period}&limit=8`),
@@ -145,7 +160,13 @@ export async function scan(symbol:string,interval:string,exchange:Venue){return 
     k=n.raw;oi=n.oi;dataNote=n.dataNote;
   }else{
     const querySymbol=encodeURIComponent(symbol);
-    const [info,marks,intervals,bars,interest]=await Promise.all([binanceInfo(),binanceMarks(),binanceIntervals(),json(`${BASE}/fapi/v1/klines?symbol=${querySymbol}&interval=${interval}&limit=99`),json(`${BASE}/futures/data/openInterestHist?symbol=${querySymbol}&period=${interval}&limit=8`)]);
+    const [info,marks,intervals,window]=await Promise.all([binanceInfo(),binanceMarks(),binanceIntervals(),
+      cache(`window:v2:Binance:${symbol}:${interval}`,(v:any)=>windowCacheMs(interval,v.closedAt),async()=>{
+        const [bars,interest]=await Promise.all([json(`${BASE}/fapi/v1/klines?symbol=${querySymbol}&interval=${interval}&limit=99`),json(`${BASE}/futures/data/openInterestHist?symbol=${querySymbol}&period=${interval}&limit=8`)]);
+        const validated=analyze(symbol,interval,bars,interest,0);
+        return {bars,interest,closedAt:validated.closedAt};
+      })]);
+    const {bars,interest}=window;
     const contract=info.symbols.find((s:any)=>s.symbol===symbol&&s.status==='TRADING'&&s.contractType==='PERPETUAL'&&s.quoteAsset==='USDT'),m=marks.find((r:any)=>r.symbol===symbol);
     if(!contract||!m||Date.now()-Number(m.time)>180000)throw new Error('Contract or fresh Binance funding unavailable');
     funding=Number(m.lastFundingRate)*8/(Number(intervals.find((x:any)=>x.symbol===symbol)?.fundingIntervalHours)||8);
@@ -182,3 +203,4 @@ export async function okxContext(symbol:string,interval:string){
   if(!f||!(hours>0)||f.fundingRate===''||Date.now()-Number(f.ts)>180000)throw new Error('Waiting for fresh OKX funding');
   return {...series,symbol,interval,exchange:'OKX',instrument,funding:Number(f.fundingRate)*8/hours,fundingAt:+f.ts};
 }
+

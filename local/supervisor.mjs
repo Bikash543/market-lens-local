@@ -6,6 +6,7 @@ import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {runCollector} from './collector.mjs';
 import {startExchangeNetwork} from './exchange-network.mjs';
+import {createWorkQueue} from './work-queue.mjs';
 import {runtimeConfig} from './runtime-config.mjs';
 const config=runtimeConfig(),root=config.root;
 const logs=path.join(config.data,'logs');mkdirSync(logs,{recursive:true});
@@ -17,8 +18,13 @@ function log(message){
   }catch{}
 }
 let serverProcess=null,stopping=false,collectorAbort=null,exchangeNetwork=null;
+const scanQueue=createWorkQueue({spacingMs:job=>job.exchange==='Binance'?1000:1600,run:async(job,signal)=>{
+  const response=await fetch(config.origin+'/api/local/scan-work',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(job),signal});
+  const value=await response.json();if(!response.ok)throw new Error(value.error||'Scan worker unavailable');return value;
+}});
 async function stop(){
   if(stopping)return;stopping=true;collectorAbort?.abort();
+  scanQueue.close();
   if(serverProcess?.pid){
     // Only the child process tree started and recorded by this supervisor.
     await new Promise(resolve=>{
@@ -28,13 +34,23 @@ async function stop(){
   }
   exchangeNetwork?.close();log('Stopped by user.');control.close(()=>process.exit(0));setTimeout(()=>process.exit(0),2000).unref();
 }
-const control=createServer((req,res)=>{
+const control=createServer(async(req,res)=>{
   if(req.headers.host!==`127.0.0.1:${config.controlPort}`||(req.headers.origin&&req.headers.origin!==config.origin)){
     res.writeHead(403);res.end('Local access only');return;
   }
   res.setHeader('Content-Type','application/json');
-  if(req.url==='/stop'&&req.method==='POST'){res.end('{"stopping":true}');void stop()}
-  else if(req.url==='/status'&&req.method==='GET')res.end(JSON.stringify({application:'Market Lens Local supervisor',root,dataDirectory:config.data,pid:process.pid,serverPid:serverProcess?.pid,stopping}));
+  if(req.url==='/scan'&&req.method==='POST'){
+    if(req.headers.origin){res.writeHead(403);res.end('{"error":"Server requests only"}');return}
+    try{
+      let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>2048)throw new Error('Job too large')}
+      const job=JSON.parse(raw);
+      if(typeof job.symbol!=='string'||job.symbol!==job.symbol.toUpperCase()||!/^[\p{L}\p{M}\p{N}_]{1,30}USDT$/u.test(job.symbol)||!['OKX','Binance'].includes(job.exchange)||!['15m','1h'].includes(job.interval))throw new Error('Invalid job');
+      const value=await scanQueue.submit(`${job.exchange}:${job.symbol}:${job.interval}`,job,Math.max(0,Math.min(8,Number(job.priority)||0)));
+      if(!res.destroyed)res.end(JSON.stringify(value));
+    }catch(e){if(!res.destroyed){res.writeHead(503);res.end(JSON.stringify({error:e.message}))}}
+  }
+  else if(req.url==='/stop'&&req.method==='POST'){res.end('{"stopping":true}');void stop()}
+  else if(req.url==='/status'&&req.method==='GET')res.end(JSON.stringify({application:'Market Lens Local supervisor',root,dataDirectory:config.data,pid:process.pid,serverPid:serverProcess?.pid,stopping,queue:scanQueue.stats()}));
   else{res.writeHead(404);res.end('{}')}
 });
 control.on('error',e=>{log('Supervisor not started: '+e.message);process.exit(e.code==='EADDRINUSE'?0:1)});
@@ -51,7 +67,8 @@ control.listen(config.controlPort,'127.0.0.1',async()=>{
       '--import','./scripts/sites-env.mjs',config.wrangler,'dev',
       '--config','dist/server/wrangler.json','--local','--persist-to',path.join(config.data,'state'),
       '--ip','127.0.0.1','--port',String(config.port),'--inspector-port','0',
-      '--var',`MARKET_LENS_TRANSPORT_ORIGIN:${config.transportOrigin}`
+      '--var',`MARKET_LENS_TRANSPORT_ORIGIN:${config.transportOrigin}`,
+      '--var',`MARKET_LENS_CONTROL_ORIGIN:${config.controlOrigin}`
     ],{cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,SITES_RUNTIME_ROOT:path.join(config.data,'runtime'),WRANGLER_SEND_METRICS:'false',BROWSER:'none',NO_COLOR:'1'}});
     let exited=false;
     const ended=new Promise(resolve=>{
