@@ -25,6 +25,14 @@ Developers can use the source installation below. Only run one installation on t
 
 ## Features
 
+### User guide
+
+Open **User Guide** in the app's navigation for **Open PDF** and **Download PDF**. The 10-page guide includes the implemented signal rules, refresh and history warnings, entry/stop/target explanations, and a fillable review checklist. The PDF is bundled with the app and can be read offline.
+
+[Read or download the user guide](public/guides/Market-Lens-User-Guide-and-Rules.pdf) · [Open the guide in the live app](https://market-lens-futures.rupeshwarsah35.chatgpt.site/user-guide)
+
+Edition: 21 October 2026. Later source changes may supersede individual rules in this dated guide. The existing v0.3.0 installer has not been rebuilt with this addition.
+
 | Workspace | What it does |
 | --- | --- |
 | All Markets | Screens active USDT perpetual contracts using price/trend, open interest, funding, taker flow and dominance context. Supports 15-minute and 1-hour analysis, search, sorting, pagination and scan progress. |

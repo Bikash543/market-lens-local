@@ -344,9 +344,9 @@ footer .tiny-dot { margin-right: 6px; width: 5px; height: 5px; }
   .table-wrap { max-height: 510px; }
 }
 @media (max-width:600px) {
-  .rail { inset: auto 0 0; width: 100%; height: 58px; padding: 7px 14px; flex-direction: row; justify-content: space-around; gap: 8px; border-right: 0; border-top: 1px solid var(--line); }
+  .rail { inset: auto 0 0; width: 100%; height: 58px; padding: 7px 8px; flex-direction: row; justify-content: space-around; gap: 4px; border-right: 0; border-top: 1px solid var(--line); }
   .mark, .avatar { display: none; }
-  .nav-icon { width: 44px; height: 40px; }
+  .nav-icon { width: 44px; height: 40px; flex:1; min-width:0; max-width:44px; }
   .rail-bottom { margin: 0; display: contents; }
   .app-shell > main { margin-left: 0; padding-bottom: 58px; }
   .content { padding: 23px 16px 16px; }
