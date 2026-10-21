@@ -1,7 +1,7 @@
 import { deadline } from './feed-cache';
 import {localFetch} from './local-fetch';
 
-const UA='MarketLensLocal/1.0 (public market analytics)';
+const UA='MarketLens/2.0 (+https://market-lens-futures.rupeshwarsah35.chatgpt.site; public market analytics)';
 const cooldown=new Map<string,number>(),nextSlot=new Map<string,number>();
 const rateFailures=new Map<string,{count:number;at:number}>();
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -20,15 +20,17 @@ export function retryAfter(header:string|null,now=Date.now()){
   return Math.max(1000,Math.min(300000,Number.isFinite(seconds)?seconds*1000:Date.parse(header)-now||1500));
 }
 export async function upstreamJSON(url:string,options:UpstreamOptions={}){
-  const parsed=new URL(url),key=parsed.host+parsed.pathname,timeout=options.timeoutMs??6500;
+  const parsed=new URL(url),isCMC=parsed.hostname==='pro-api.coinmarketcap.com',isCoinLore=parsed.hostname==='api.coinlore.net';
+  // CMC keyless calls share an IP pool, not a separate limit for each path.
+  const key=isCMC?parsed.host+(parsed.pathname.startsWith('/public-api/')?'/public-pool':'/keyed-pool'):isCoinLore?parsed.host+'/public-pool':parsed.host+parsed.pathname,timeout=options.timeoutMs??6500;
   const until=cooldown.get(key)??0;
   if(until>Date.now())throw new FeedError(`${parsed.hostname} is cooling down after a rate limit`,until-Date.now());
   const finish=Date.now()+timeout;
   for(let attempt=0;attempt<(options.attempts??2);attempt++){
     // Every attempt is paced, including retries. D1 reservations coordinate
     // visitors across isolates without retaining another request's I/O promise.
-    if(parsed.pathname.startsWith('/api/v5/')){
-      const spacing=parsed.pathname.includes('/market/')?1500:parsed.pathname.startsWith('/api/v5/rubik/')?750:250;
+    if(parsed.pathname.startsWith('/api/v5/')||isCMC||isCoinLore){
+      const spacing=isCMC||isCoinLore?1100:parsed.pathname.includes('/market/')?1500:parsed.pathname.startsWith('/api/v5/rubik/')?750:250;
       let at:number|null|{retryAfterMs:number}|undefined;
       if(options.gate){try{at=await deadline(options.gate.reserve(key,spacing,3000),700,'Rate gate timed out')}catch{/* Local pacing if storage is unavailable. */}}
       if(at===undefined){

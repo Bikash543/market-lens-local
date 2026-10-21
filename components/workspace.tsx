@@ -22,7 +22,11 @@ export default function Workspace({initialView='markets'}:{initialView?:string})
     const theme=document.documentElement.dataset.theme==='dark'?'dark':'light';
     for(const frame of Object.values(frames.current))frame?.contentWindow?.postMessage({type:'workspace-theme',theme},location.origin);
   }
+  function sendActivity(){
+    for(const [name,frame] of Object.entries(frames.current))frame?.contentWindow?.postMessage({type:'workspace-activity',active:name===panelFor(viewRef.current)},location.origin);
+  }
   function sendView(){
+    sendActivity();
     frames.current.markets?.contentWindow?.postMessage({type:'workspace-view',view:viewRef.current},location.origin);
   }
   function navigate(next:View,push=true){

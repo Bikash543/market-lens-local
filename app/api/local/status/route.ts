@@ -2,13 +2,13 @@ import {env} from 'cloudflare:workers';
 import {readSetting,writeSetting,json} from '@/lib/local-store';
 import {historyStatus} from '@/lib/local-compass/data';
 export async function GET(){
-  const [collector,watchlist,counts,history]=await Promise.all([
+  const [collector,watchlist,counts,history,recovery,timestamps]=await Promise.all([
     readSetting<any>('collector'),readSetting<string[]>('watchlist'),
     env.DB!.prepare('SELECT exchange,interval,COUNT(*) AS checked,SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) AS loaded,MAX(attempted) AS lastAttempt FROM local_analyses GROUP BY exchange,interval').all(),
-    historyStatus()
+    historyStatus(),readSetting<any>('dominance-recovery'),readSetting<any>('direction-timestamps')
   ]);
   return json({application:'Market Lens Local',version:1,now:Date.now(),collector,
-    running:!!collector&&Date.now()-collector.heartbeatAt<90000,watchlist:watchlist??[],counts:counts.results,history,
+    running:!!collector&&Date.now()-collector.heartbeatAt<90000,watchlist:watchlist??[],counts:counts.results,history,recovery,timestamps,
     storage:'data/state (local SQLite)',refresh:'Manual display refresh; background data collection'});
 }
 export async function POST(req:Request){

@@ -9,6 +9,7 @@ export function recoveryRows(backup:any,now=Date.now()){
       const value=JSON.parse(row.body);
       if(row.time!==value.at||!inWindow(value.at)||!value.prices||Object.keys(value.prices).length<50)continue;
       if(Object.entries(value.prices).some(([id,p])=>!/^\d+$/.test(id)||typeof p!=='number'||!Number.isFinite(p)||p<=0))continue;
+      if(value.version===2&&(!value.times||Object.keys(value.prices).some(id=>!inWindow(value.times[id])||Math.abs(value.times[id]-value.at)>120000)))continue;
       market.push({time:value.at,body:JSON.stringify(value)});
     }catch{}
   }
@@ -21,7 +22,7 @@ export function recoveryRows(backup:any,now=Date.now()){
     }catch{}
   }
   for(const row of (Array.isArray(backup.dominance)?backup.dominance:[]).slice(-2000)){
-    if(inWindow(row.time)&&['CoinPaprika','CoinGecko'].includes(row.source)&&[row.btc,row.usdt].every(v=>Number.isFinite(v)&&v>0&&v<=100))dominance.push(row);
+    if(inWindow(row.time)&&['CoinPaprika','CoinGecko','CoinMarketCap'].includes(row.source)&&[row.btc,row.usdt].every(v=>Number.isFinite(v)&&v>0&&v<=100))dominance.push(row);
   }
   return {market,observations,dominance};
 }

@@ -1,6 +1,8 @@
 import {sharedOKX,sharedOKXCandles,sharedFeedCache} from './shared-feeds';
 import {market as localBroadMarket,scope as broadScope} from './local-compass/data';
-import {bars,evaluate,Q,H,type Inputs,type Side} from './confirmation';
+import {bars,evaluate,formingRange,Q,H,type Inputs,type Side,type Snapshot} from './confirmation';
+import {env} from 'cloudflare:workers';
+import {rememberRetirement} from './plan-retirement';
 import {confirmationMarkets} from './confirmation-symbols';
 import {applyDirectInputs,type DirectBundle} from './confirmation-direct';
 export const scope=sharedFeedCache.scope;
@@ -10,6 +12,11 @@ async function get(path:string,ttl:number|((value:any[])=>number)=45000,timeoutM
 }
 async function closedCandles(symbol:string,bar:'15m'|'1H',step:number){
   return bars(await sharedOKXCandles(symbol,bar,100),step);
+}
+async function currentRange(symbol:string){
+  // Cache the acquisition timestamp along with the range. A short shared lease
+  // lets simultaneous browser requests reuse it without extending its age.
+  return sharedFeedCache.get('confirmation:range:v1:'+symbol,2000,async()=>formingRange(await sharedOKX(`/api/v5/market/candles?instId=${symbol}-USDT-SWAP&bar=15m&limit=2`,0,7500,0)));
 }
 const message=(e:unknown)=>(e instanceof Error?e.message:'Provider unavailable').replace(/automatic retry scheduled/gi,'click Analyse it after the cooldown to retry');
 async function broadMarket(){return broadScope(()=>localBroadMarket())}
@@ -31,6 +38,9 @@ export async function analyze(symbol:string,requested:'AUTO'|Side,direct?:Direct
   })();
   await Promise.all([
     candleTask,
+    // Separate short-lived range cache: closed-candle caches can be held until
+    // the next close and must not supply live stop/target invalidation.
+    take('Current candle range',()=>currentRange(symbol),v=>input.intrabar=v),
     take('Spot CVD',()=>get(`/api/v5/rubik/stat/taker-volume?ccy=${symbol}&instType=SPOT&period=5m`,60000),v=>input.spot=v),
     take('Open interest',()=>get(`/api/v5/rubik/stat/contracts/open-interest-history?instId=${symbol}-USDT-SWAP&period=5m&limit=30`,60000),v=>input.oi=v),
     take('Funding',()=>get(`/api/v5/public/funding-rate?instId=${symbol}-USDT-SWAP`,60000),v=>input.funding=v[0]??null),
@@ -39,7 +49,14 @@ export async function analyze(symbol:string,requested:'AUTO'|Side,direct?:Direct
     direct?Promise.resolve():take('Quote',()=>get('/api/v5/market/tickers?instType=SWAP',30000),v=>input.ticker=v.find((t:any)=>t.instId===`${symbol}-USDT-SWAP`)??null),
     take('Broad market',broadMarket,v=>input.market=v)
   ]);
-  const now=Date.now(),long=evaluate(input,'LONG',now),short=evaluate(input,'SHORT',now);
+  const now=Date.now();
+  async function retainRetirement(s:Snapshot){
+    return rememberRetirement(s,{
+      write:(key,reason,expires)=>env.DB!.prepare('INSERT OR IGNORE INTO local_retired_plans(key,reason,retiredAt,expires) VALUES (?,?,?,?)').bind(key,reason,now,expires).run(),
+      read:async key=>(await env.DB!.prepare('SELECT reason FROM local_retired_plans WHERE key=?').bind(key).first<{reason:string}>())?.reason??null
+    });
+  }
+  const [long,short]=await Promise.all([retainRetirement(evaluate(input,'LONG',now)),retainRetirement(evaluate(input,'SHORT',now))]);
   const selected=requested==='LONG'?long:requested==='SHORT'?short:long.verdict==='LONG SETUP'?long:short.verdict==='SHORT SETUP'?short:short.passed>long.passed?short:long;
   return {...selected,selection:requested,alternative:{side:selected.side==='LONG'?'SHORT':'LONG',passed:selected.side==='LONG'?short.passed:long.passed}};
 }

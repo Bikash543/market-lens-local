@@ -1,10 +1,15 @@
-import {sharedOKX,sharedOKXCandles} from '../shared-feeds';
+import {readSetting,writeSetting} from '../local-store';
+import {cmcConstituents,cmcHistoryQuery,cmcFourHour} from '../cmc-four-hour';
+import {flowSample} from '../flow-sample';
+import {sharedOKX,sharedOKXCandles,sharedGate} from '../shared-feeds';
 import { env, waitUntil } from 'cloudflare:workers';
 import { createFeedCache, deadline } from './feed-cache';
 import { upstreamJSON, type RequestGate } from '../upstream';
-import { analyze, safeSnapshot, MAX_AGE, FOUR_CONTEXT_AGE, captureFourContext, carryFourContext, validFourContext, type FourHourContext } from './compass';
-import { candles, structure, breakout, spotFlow, interest, compareInterest, type Interest } from './context';
+import { analyze, safeSnapshot, MAX_AGE, FOUR_CONTEXT_AGE, captureFourContext, carryFourContext, attachFourContext, validFourContext, type Compass, type FourHourContext } from './compass';
+import { candles, structure, breakout, spotFlow } from './context';
+import {aggregateInterest} from './oi-recovery';
 import { convertCoinLore,stableIds,type MarketObservation } from './coinlore';
+import {collectCoinLorePages} from './coinlore-pages';
 const gate:RequestGate={
   reserve:async(key,spacing,maxQueue)=>{
     const now=Date.now();
@@ -22,23 +27,27 @@ const cache=createFeedCache({
 },1500,15000);
 export const scope=cache.scope;
 const err=(e:unknown)=>e instanceof Error&& !/internal error; reference/.test(e.message)?e.message:'Provider connection temporarily unavailable';
-export async function market(){
-  const value=await cache.get('compass:coinlore:v3',60000,async()=>{
-    const first=await upstreamJSON('https://api.coinlore.net/api/tickers/?start=0&limit=100',{timeoutMs:4000,attempts:1});
-    // Follow CoinLore's recommended one request per second, even on cold start.
-    await new Promise(resolve=>setTimeout(resolve,1100));
-    const second=await upstreamJSON('https://api.coinlore.net/api/tickers/?start=100&limit=25',{timeoutMs:4000,attempts:1});
+async function coinLoreMarket(){
+  const value=await cache.get('compass:coinlore:v5',45000,async()=>{
+    const synchronized=await collectCoinLorePages({
+      get:query=>upstreamJSON('https://api.coinlore.net/api/tickers/?'+query,{timeoutMs:3500,attempts:1,gate:sharedGate}),
+      read:async()=>{const saved=await env.DB!.prepare('SELECT body FROM feed_cache WHERE key=?').bind('compass:coinlore-pages:v1').first<{body:string}>();return saved?JSON.parse(saved.body):null},
+      write:async buffer=>env.DB!.prepare('INSERT INTO feed_cache(key,body,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body,expires=excluded.expires').bind('compass:coinlore-pages:v1',JSON.stringify(buffer),Date.now()+1200000).run(),
+      diagnose:value=>writeSetting('direction-timestamps',value),
+    });
+    const [first,second]=synchronized.pages;
     const stored=await deadline(env.DB!.prepare('SELECT body FROM market_history WHERE time>=? ORDER BY time').bind(Date.now()-21600000).all<{body:string}>(),1500,'Market baseline unavailable');
     const history=stored.results.map(v=>JSON.parse(v.body) as MarketObservation);
-    const {tickers,snapshot,baselineMinutes,baselineFourHoursMinutes,historyMinutes}=convertCoinLore([first,second],history);
+    const {tickers,snapshot,baselineMinutes,baselineFourHoursMinutes,historyMinutes,baselineRange}=convertCoinLore([first,second],history);
     await deadline(env.DB!.batch([
-      env.DB!.prepare('INSERT OR IGNORE INTO market_history (time,body) VALUES (?,?)').bind(snapshot.at,JSON.stringify(snapshot)),
+      env.DB!.prepare('INSERT INTO market_history (time,body) VALUES (?,?) ON CONFLICT(time) DO UPDATE SET body=excluded.body').bind(snapshot.at,JSON.stringify(snapshot)),
       env.DB!.prepare('DELETE FROM market_history WHERE time<?').bind(snapshot.at-86400000)
     ]),1500,'Market baseline save timed out');
     const result=analyze(tickers,stableIds);
     result.source='CoinLore';result.baselineMinutes=baselineMinutes;result.baselineFourHoursMinutes=baselineFourHoursMinutes;result.historyMinutes=historyMinutes;
-    result.sourceNote='1h return from CoinLore; 15m and 4h from stored same-provider price observations. Local background collection runs every five minutes while this PC is awake. Saved 4h context retains its own timestamp and expires after 75 minutes. Provider response timestamps; individual quote ages are not exposed.';
-    result.collection={cadenceMinutes:5,latestObservationAt:snapshot.at,observations:new Set([...history.map(h=>h.at),snapshot.at]).size};
+    result.sourceSync={mode:synchronized.buffered?'buffered':'current',warning:synchronized.warning,checkedAt:synchronized.timing.checkedAt,pageTimes:synchronized.timing.pageTimes as number[],latestPageTimes:synchronized.diagnostics.latest.pageTimes,skewMs:synchronized.timing.skewMs??0};
+    result.sourceNote='1h return from CoinLore; 15m and fallback 4h from measured same-provider prices. Standard 100-row pages are synchronized from recent original page versions; the full top-125 basket is retained. Background collection runs every minute while this PC is awake, preserving each page timestamp. Individual quote ages are not exposed. '+(baselineRange?`Matched 15m windows: ${baselineRange[0].toFixed(1)}–${baselineRange[1].toFixed(1)} minutes.`:'15m waits for timestamp-verified history.');
+    result.collection={cadenceMinutes:1,latestObservationAt:snapshot.at,observations:new Set([...history.map(h=>h.at),snapshot.at]).size};
     if(baselineMinutes===null)result.reasons.unshift('No matching 15-minute baseline yet. Intraday confirmation waits for measured observations.');
     const currentFour=captureFourContext(result);
     let savedFour:FourHourContext|null=null;
@@ -52,17 +61,56 @@ export async function market(){
   },{staleMs:900000,onStale:(v,e)=>({...v,refreshError:e.message})});
   return safeSnapshot(value);
 }
+const CMC_FOUR_KEY='compass:cmc-four:v1';
+async function cmcContext(){
+  return cache.get<FourHourContext & {refreshError?:string}>(CMC_FOUR_KEY,v=>Math.max(60000,v.at+3600000-Date.now()),async()=>{
+    const retry=await readSetting<{until:number;message:string}>('cmc-four-retry');
+    if(retry&&retry.until>Date.now())throw new Error(retry.message);
+    try{
+      const settings:any=await fetch((process.env.MARKET_LENS_CONTROL_ORIGIN||'http://127.0.0.1:8788')+'/providers',{signal:AbortSignal.timeout(2500)}).then(r=>r.json());
+      if(!settings.cmc?.configured)throw new Error('CMC history needs an API key in Local settings; using collected CoinLore history when available.');
+      const get=(url:string)=>upstreamJSON(url,{timeoutMs:5000,attempts:1,gate:sharedGate});
+      const current=cmcConstituents(await get('https://pro-api.coinmarketcap.com/public-api/v3/cryptocurrency/listings/latest?start=1&limit=125&convert=USD'));
+      const history=await get('https://pro-api.coinmarketcap.com/v3/cryptocurrency/quotes/historical?'+cmcHistoryQuery(current));
+      const context=cmcFourHour(current,history);
+      await writeSetting('cmc-four-retry',{until:0,message:''});
+      return context;
+    }catch(e){
+      // Persist cooldown across requests/restarts, including auth/plan errors.
+      const message=err(e);
+      await writeSetting('cmc-four-retry',{until:Date.now()+300000,message}).catch(()=>{});
+      throw e;
+    }
+  },{staleMs:900000,onStale:(value,e)=>({...value,refreshError:e.message})});
+}
+export async function market(){
+  const [primary,cmc]=await Promise.allSettled([coinLoreMarket(),cmcContext()]);
+  let value:Compass;
+  if(primary.status==='fulfilled')value=primary.value;
+  else{
+    const saved=await env.DB!.prepare('SELECT body FROM local_snapshots WHERE key=?').bind('direction:market').first<{body:string}>();
+    if(!saved)throw primary.reason;
+    value={...safeSnapshot(JSON.parse(saved.body)),refreshError:err(primary.reason)};
+  }
+  if(cmc.status==='fulfilled'&&validFourContext(cmc.value)){
+    value=attachFourContext(value,cmc.value);
+    value.fourError=cmc.value.refreshError;
+  }else if(!validFourContext(value.fourContext))value.fourError=cmc.status==='rejected'?err(cmc.reason):'Saved CMC four-hour context expired; waiting for fresh provider history.';
+  return safeSnapshot(value);
+}
 // Readback only: an unattended caller can verify durable writes without causing
 // another collection. No private data, supplied records or arbitrary SQL exposed.
 export async function historyStatus(){
   const now=Date.now();
-  const [rows,saved]=await Promise.all([
+  const [rows,saved,cmcSaved]=await Promise.all([
     deadline(env.DB!.prepare('SELECT COUNT(*) AS count,MIN(time) AS first,MAX(time) AS latest FROM market_history WHERE time>=?').bind(now-86400000).first<{count:number;first:number|null;latest:number|null}>(),1500,'History status timed out'),
-    deadline(env.DB!.prepare('SELECT body FROM feed_cache WHERE key=?').bind('compass:four-hour:v1').first<{body:string}>(),1500,'4h status timed out')
+    deadline(env.DB!.prepare('SELECT body FROM feed_cache WHERE key=?').bind('compass:four-hour:v1').first<{body:string}>(),1500,'4h status timed out'),
+    deadline(env.DB!.prepare('SELECT body FROM feed_cache WHERE key=?').bind(CMC_FOUR_KEY).first<{body:string}>(),1500,'CMC 4h status timed out')
   ]);
   let four:FourHourContext|null=null;
   if(saved){try{four=JSON.parse(saved.body)}catch{}}
-  return {checkedAt:now,cadenceMinutes:5,retentionHours:24,observations:rows?.count??0,firstObservationAt:rows?.first??null,latestObservationAt:rows?.latest??null,fourHour:{asOf:four?.at??null,baselineMinutes:four?.baselineMinutes??null,usable:validFourContext(four,now),expiresAt:four?four.at+FOUR_CONTEXT_AGE:null},note:'Collection is scheduled every five minutes on this PC. Provider failures or gaps can delay the baseline. Browser reads also refresh observations.'};
+  if(cmcSaved){try{const v=JSON.parse(cmcSaved.body);if(validFourContext(v,now)||!validFourContext(four,now))four=v}catch{}}
+  return {checkedAt:now,cadenceMinutes:1,retentionHours:24,observations:rows?.count??0,firstObservationAt:rows?.first??null,latestObservationAt:rows?.latest??null,fourHour:{source:four?.source??'CoinLore',asOf:four?.at??null,baselineMinutes:four?.baselineMinutes??null,usable:validFourContext(four,now),expiresAt:four?four.at+FOUR_CONTEXT_AGE:null},note:'CoinLore collection runs every minute on this PC. With a configured key, CMC four-hour context uses verified history and is cached for about one hour. Original provider timestamps and the 75-minute expiry are preserved.'};
 }
 async function okx(path:string,ttl:number|((value:any[])=>number)=120000,timeoutMs=7000):Promise<any[]>{
   return sharedOKX(path,ttl,timeoutMs);
@@ -75,32 +123,13 @@ export async function btcContext(){
   });
 }
 export async function flowContext(){
-  return cache.get('spot:sample:v1',180000,async()=>{
-    const rows:{symbol:string;at:number;imbalance:number;delta:number;volume:number}[]=[],errors:string[]=[];
-    const finish=Date.now()+11000;
-    // Bound the entire optional sample; a slow member cannot hold it open.
-    for(const symbol of ['SOL','XRP','DOGE','LINK']){
-      if(finish-Date.now()<1800){errors.push(`${symbol}: Refresh budget reached`);continue}
-      try{
-        const raw=await okx(`/api/v5/rubik/stat/taker-volume?ccy=${symbol}&instType=SPOT&period=5m`,180000,Math.min(2500,finish-Date.now()-1000));
-        rows.push({symbol,...spotFlow(raw)});
-      }catch(e){errors.push(`${symbol}: ${err(e)}`)}
-      if(symbol!=='LINK')await new Promise(resolve=>setTimeout(resolve,1500));
-    }
-    // Ratios can be averaged. Raw base-currency quantities cannot be summed.
-    const aligned=rows.length===4&&Math.max(...rows.map(v=>v.at))-Math.min(...rows.map(v=>v.at))<=300000;
-    return {at:Date.now(),rows,errors,average:aligned?rows.reduce((s,v)=>s+v.imbalance,0)/4:null,source:'OKX spot • four-alt sample',note:'Equal-weight taker imbalance. Not a market-wide USD CVD series.'};
-  });
+  return cache.get('spot:sample:v2',v=>v.errors.length?30000:180000,()=>flowSample(async symbol=>{
+    const raw=await okx(`/api/v5/rubik/stat/taker-volume?ccy=${symbol}&instType=SPOT&period=5m`,180000,6000);
+    return spotFlow(raw);
+  }));
 }
 export async function interestContext(){
-  return cache.get('oi:aggregate:v2',120000,async()=>{
-    const current=interest(await okx('/api/v5/public/open-interest?instType=SWAP',120000));
-    const stored=await deadline(env.DB!.prepare('SELECT body FROM observations WHERE time >= ? ORDER BY time').bind(current.at-21600000).all<{body:string}>(),2000,'OI history read timed out');
-    const history=stored.results.map(v=>JSON.parse(v.body) as Interest);
-    await deadline(env.DB!.batch([
-      env.DB!.prepare('INSERT OR IGNORE INTO observations (time,body) VALUES (?,?)').bind(current.at,JSON.stringify(current)),
-      env.DB!.prepare('DELETE FROM observations WHERE time < ?').bind(current.at-86400000)
-    ]),2000,'OI history write timed out');
-    return {at:current.at,total:Object.values(current.values).reduce((s,v)=>s+v,0),count:Object.keys(current.values).length,quarter:compareInterest(current,history,15),hour:compareInterest(current,history,60),fourHour:compareInterest(current,history,240),source:'OKX USDT perpetuals',note:'USD notional; changes include price effects. Local five-minute collection and manual refreshes save observations. Missing intervals stay unavailable.'};
-  });
+  // Live quote transport is shared/cached, while recovered history is read now.
+  // A stale aggregate cache must not hide newly repaired comparison windows.
+  return aggregateInterest();
 }

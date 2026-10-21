@@ -417,3 +417,5 @@ footer .tiny-dot { margin-right: 6px; width: 5px; height: 5px; }
 .diagnostic-grid>div{font-size:11px}.diagnostic-grid strong{display:block;font-size:21px;margin:9px 0}.diagnostic-grid small{font-size:11px;color:var(--muted);font-weight:400}
 @media(max-width:900px){.diagnostic-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:500px){.diagnostic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.sort-description { margin:0; padding:9px 25px; color:var(--muted); font-size:12px; border-bottom:1px solid var(--line); }

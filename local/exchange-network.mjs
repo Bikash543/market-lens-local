@@ -1,11 +1,15 @@
 import {createServer} from 'node:http';
 import https from 'node:https';
-const hosts=new Set(['openapi.okx.com','fapi.binance.com']);
+import {providerKey} from './provider-settings.mjs';
+const hosts=new Set(['openapi.okx.com','fapi.binance.com','api.gateio.ws','pro-api.coinmarketcap.com','api.coinalyze.net']);
 const cache=new Map(),flights=new Map();
 export function allowedURL(raw){
   const url=new URL(raw);
   if(url.protocol!=='https:'||url.username||url.password||url.port||!hosts.has(url.hostname))throw new Error('Unsupported exchange URL');
-  const allowed=url.hostname==='openapi.okx.com'?
+  const allowed=url.hostname==='api.gateio.ws'?/^\/api\/v4\/futures\/usdt\/(contract_stats|contracts\/[A-Z0-9_]+|funding_rate)$/.test(url.pathname):
+    url.hostname==='pro-api.coinmarketcap.com'?['/v1/global-metrics/quotes/historical','/v3/cryptocurrency/quotes/historical','/public-api/v1/global-metrics/quotes/latest','/public-api/v3/cryptocurrency/quotes/latest','/public-api/v3/cryptocurrency/listings/latest'].includes(url.pathname):
+    url.hostname==='api.coinalyze.net'?['/v1/future-markets','/v1/open-interest','/v1/funding-rate','/v1/open-interest-history'].includes(url.pathname):
+    url.hostname==='openapi.okx.com'?
     /^\/api\/v5\/(public|market|rubik\/stat)\//.test(url.pathname):
     ['/fapi/v1/time','/fapi/v1/exchangeInfo','/fapi/v1/ticker/24hr','/fapi/v1/premiumIndex','/fapi/v1/fundingInfo','/fapi/v1/klines','/futures/data/openInterestHist'].includes(url.pathname);
   if(!allowed||url.search.length>1500)throw new Error('Only public market-data endpoints are allowed');
@@ -37,7 +41,12 @@ export async function startExchangeNetwork(log,port=8789){
     let url;
     try{url=allowedURL(new URL(req.url,`http://127.0.0.1:${port}`).searchParams.get('url')||'')}
     catch{res.writeHead(400);res.end('Unsupported public endpoint');return}
-    const upstream=https.get(url,{agent,timeout:12000,headers:{Accept:'application/json','User-Agent':'MarketLensLocal/1.0'}},response=>{
+    const headers={Accept:'application/json','User-Agent':'MarketLensLocal/1.0'};
+    if(url.hostname==='pro-api.coinmarketcap.com'&&!url.pathname.startsWith('/public-api/')){
+      const key=providerKey('cmc');if(!key){res.writeHead(428,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'Add a free CoinMarketCap API key in Local settings to enable historical dominance recovery.'}));return}headers['X-CMC_PRO_API_KEY']=key;
+    }
+    if(url.hostname==='api.coinalyze.net'){const key=providerKey('coinalyze');if(!key){res.writeHead(428,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'Coinalyze API key is not configured.'}));return}headers.api_key=key}
+    const upstream=https.get(url,{agent,timeout:12000,headers},response=>{
       const chunks=[];let bytes=0;
       response.on('data',chunk=>{bytes+=chunk.length;if(bytes>8_000_000)upstream.destroy(new Error('Exchange response too large'));else chunks.push(chunk)});
       response.on('end',()=>{

@@ -7,8 +7,8 @@ export const HORIZONS:Horizon[]=['15m','1h','4h'];
 export type Coin = { id:string; symbol:string; name:string; rank:number; cap:number; price:number; volume:number; at:number; changes:Record<Horizon,number|null> };
 export type Breadth = { up:number; down:number; flat:number; total:number; available:number; advance:number; median:number|null };
 export type Reading = { horizon:Horizon; alt:number|null; altWithEth:number|null; smaller:number|null; btc:number|null; btcDom:number|null; usdtDom:number|null; breadth:Breadth; coverage:number; bias:'LONG'|'SHORT'|'WAIT'; reasons:string[] };
-export type FourHourContext = {at:number;baselineMinutes:number;reading:Reading;changes:Record<string,number|null>;altCap:number;btcPrice:number;btcDominance:number;usdtDominance:number};
-export type Compass = { at:number; fetchedAt:number; source:string; baselineMinutes?:number|null; baselineFourHoursMinutes?:number|null; historyMinutes?:number; sourceNote?:string; totalCap:number; altCap:number; altWithEthCap:number; smallCap:number; btcPrice:number; btcDominance:number; usdtDominance:number; count:number; expected:number; stableCount:number; coverage:number; rows:Coin[]; readings:Record<Horizon,Reading>; signal:'LONG BIAS'|'SHORT BIAS'|'WAIT'; alignedSignal:'LONG BIAS'|'SHORT BIAS'|'WAIT'; alignment:'ALIGNED'|'CONFLICT'|'MIXED'|'COLLECTING'|'UNAVAILABLE'; reasons:string[]; stale:boolean; refreshing?:boolean; refreshError?:string;fourContext?:FourHourContext;fourStatus?:'live'|'saved'|'expired';collection?:{cadenceMinutes:number;latestObservationAt:number;observations:number} };
+export type FourHourContext = {source?:string;rows?:Coin[];constituents?:number;stableCount?:number;historyCredits?:number;at:number;baselineMinutes:number;reading:Reading;changes:Record<string,number|null>;altCap:number;btcPrice:number;btcDominance:number;usdtDominance:number};
+export type Compass = { at:number; fetchedAt:number; source:string; baselineMinutes?:number|null; baselineFourHoursMinutes?:number|null; historyMinutes?:number; sourceNote?:string; totalCap:number; altCap:number; altWithEthCap:number; smallCap:number; btcPrice:number; btcDominance:number; usdtDominance:number; count:number; expected:number; stableCount:number; coverage:number; rows:Coin[]; readings:Record<Horizon,Reading>; signal:'LONG BIAS'|'SHORT BIAS'|'WAIT'; alignedSignal:'LONG BIAS'|'SHORT BIAS'|'WAIT'; alignment:'ALIGNED'|'CONFLICT'|'MIXED'|'COLLECTING'|'UNAVAILABLE'; reasons:string[]; stale:boolean; refreshing?:boolean; refreshError?:string;fourContext?:FourHourContext;fourStatus?:'live'|'saved'|'expired';fourError?:string;sourceSync?:{mode:'current'|'buffered';warning?:string;checkedAt:number;pageTimes:number[];latestPageTimes:(number|null)[];skewMs:number};collection?:{cadenceMinutes:number;latestObservationAt:number;observations:number} };
 const valid=(x:unknown):x is number=>typeof x==='number'&&Number.isFinite(x);
 const sum=(rows:Coin[])=>rows.reduce((s,c)=>s+c.cap,0);
 const change=(x:unknown)=>valid(x)&&x>-100&&x<100000?Number(x.toFixed(6)):null;
@@ -83,7 +83,7 @@ export function analyze(raw:any[],stableIds:string[],now=Date.now()):Compass {
 }
 const fourReady=(r:Reading)=>r?.horizon==='4h'&&r.coverage>=.9&&r.breadth?.available>=50&&r.breadth.available/r.breadth.total>=.9&&[r.alt,r.btc,r.usdtDom,r.btcDom].every(valid);
 export function validFourContext(value:FourHourContext|undefined|null,now=Date.now()):value is FourHourContext {
-  return !!value&&valid(value.at)&&value.at<=now+30000&&now-value.at<=FOUR_CONTEXT_AGE&&value.baselineMinutes>=230&&value.baselineMinutes<=250&&fourReady(value.reading)&&['LONG','SHORT','WAIT'].includes(value.reading.bias)&&Array.isArray(value.reading.reasons)&&[value.altCap,value.btcPrice,value.btcDominance,value.usdtDominance].every(valid)&&!!value.changes&&typeof value.changes==='object'&&Object.values(value.changes).every(v=>v===null||valid(v));
+  return !!value&&(value.source!=='CoinMarketCap'||(Array.isArray(value.rows)&&value.rows.length>=50&&value.rows.length<=125&&value.rows.every(c=>typeof c.id==='string'&&typeof c.symbol==='string'&&typeof c.name==='string'&&valid(c.price)&&valid(c.cap)&&valid(c.at)&&c.changes&&HORIZONS.every(h=>c.changes[h]===null||valid(c.changes[h])))))&&valid(value.at)&&value.at<=now+30000&&now-value.at<=FOUR_CONTEXT_AGE&&value.baselineMinutes>=230&&value.baselineMinutes<=250&&fourReady(value.reading)&&['LONG','SHORT','WAIT'].includes(value.reading.bias)&&Array.isArray(value.reading.reasons)&&[value.altCap,value.btcPrice,value.btcDominance,value.usdtDominance].every(valid)&&!!value.changes&&typeof value.changes==='object'&&Object.values(value.changes).every(v=>v===null||valid(v));
 }
 export function captureFourContext(value:Compass,now=Date.now()):FourHourContext|null {
   if(value.fourStatus==='saved'||(value.fourContext&&value.fourContext.at!==value.at)||value.stale||value.alignment==='UNAVAILABLE'||now-value.at>MAX_AGE||value.at>now+30000||value.baselineFourHoursMinutes==null||!fourReady(value.readings['4h']))return null;
@@ -98,6 +98,14 @@ export function carryFourContext(value:Compass,saved:FourHourContext|null,now=Da
   const alignedSignal=value.signal!=='WAIT'&&saved.reading.bias===hour.bias?value.signal:'WAIT';
   const alignment=value.stale||value.alignment==='UNAVAILABLE'?'UNAVAILABLE':alignedSignal!=='WAIT'?'ALIGNED':value.signal!=='WAIT'&&saved.reading.bias!=='WAIT'?'CONFLICT':'MIXED';
   return {...value,fourContext:saved,fourStatus:'saved',baselineFourHoursMinutes:saved.baselineMinutes,alignedSignal,alignment,readings:{...value.readings,'4h':saved.reading},rows:value.rows.map(c=>({...c,changes:{...c.changes,'4h':saved.changes[c.id]??null}}))};
+}
+// Independent CMC context: preserve the intraday model and its CoinLore rows.
+// The UI selects CMC rows only for the CMC four-hour view.
+export function attachFourContext(value:Compass,context:FourHourContext,now=Date.now()):Compass {
+  if(!validFourContext(context,now))return value;
+  const alignedSignal=value.signal!=='WAIT'&&context.reading.bias===value.readings['1h'].bias?value.signal:'WAIT';
+  const alignment=value.stale||value.alignment==='UNAVAILABLE'?'UNAVAILABLE':alignedSignal!=='WAIT'?'ALIGNED':value.signal!=='WAIT'&&context.reading.bias!=='WAIT'?'CONFLICT':'MIXED';
+  return {...value,fourContext:context,fourStatus:now-context.at<=MAX_AGE?'live':'saved',baselineFourHoursMinutes:context.baselineMinutes,alignedSignal,alignment,readings:{...value.readings,'4h':context.reading},rows:value.rows.map(c=>({...c,changes:{...c.changes,'4h':null}}))};
 }
 export function safeSnapshot(value:Compass,now=Date.now()):Compass {
   let result=value;

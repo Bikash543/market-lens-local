@@ -11,7 +11,8 @@ export type Snapshot={
   context:{funding8h:number|null;fundingHours:number|null;btcDom:number|null;usdtDom:number|null;vwap:number|null;marketBias:string};
   errors:string[];provider:'OKX';marketMode:'BASKET PROXY';retryAfterMs:number;expiresAt:number;
 };
-export type Inputs={symbol:string;q:Bar[]|null;btcQ:Bar[]|null;btcH:Bar[]|null;spot:any[]|null;oi:any[]|null;funding:any|null;ticker:any|null;market:any|null;errors:string[]};
+export type Intrabar={bar:Bar;checkedAt:number};
+export type Inputs={symbol:string;q:Bar[]|null;btcQ:Bar[]|null;btcH:Bar[]|null;spot:any[]|null;oi:any[]|null;funding:any|null;ticker:any|null;market:any|null;errors:string[];intrabar?:Intrabar|null};
 export const MIN=60000,Q=15*MIN,H=60*MIN;
 const mean=(a:number[])=>a.length?a.reduce((s,x)=>s+x,0)/a.length:0;
 const finite=(x:unknown):x is number=>typeof x==='number'&&Number.isFinite(x);
@@ -80,7 +81,15 @@ export function fundingValue(f:any,now:number){
   if(!finite(hours)||hours<=0||hours>24)return null;
   return {rate8h:+f.fundingRate*8/hours*100,hours};
 }
-export function makePlan(p:Pattern,b:Bar[],price:number|null,now:number):Plan|null{
+// Forming candles can invalidate an entry, but can never confirm its pattern.
+export function formingRange(raw:any[],now=Date.now()):Intrabar{
+  const open=Math.floor(now/Q)*Q,rows=raw.filter(x=>+x[0]===open);
+  if(rows.length!==1)throw new Error('Current candle range unavailable');
+  const x=rows[0],bar={t:+x[0],o:+x[1],h:+x[2],l:+x[3],c:+x[4],v:+x[7]};
+  if(!Object.values(bar).every(finite)||bar.l<=0||bar.v<0||bar.h<Math.max(bar.o,bar.c,bar.l)||bar.l>Math.min(bar.o,bar.c))throw new Error('Invalid current candle range');
+  return {bar,checkedAt:now};
+}
+export function makePlan(p:Pattern,b:Bar[],price:number|null,now:number,intrabar?:Intrabar|null):Plan|null{
   if(p.entry===null||p.stop===null||p.retestAt===null)return null;
   const s=p.side==='LONG'?1:-1,entry=p.entry,stop=p.stop,risk=s*(entry-stop);
   if(risk<=0||entry<=0)return null;
@@ -89,7 +98,9 @@ export function makePlan(p:Pattern,b:Bar[],price:number|null,now:number):Plan|nu
   // 0.05% taker fee and 0.02% slippage per side, charged on each fill's notional.
   const perFill=.0007,lossCost=(entry+stop)*perFill,winCost=(entry+target2)*perFill;
   const netRR=(2*risk-winCost)/(risk+lossCost);
+  const rangeReady=!!intrabar&&intrabar.checkedAt<=now&&now-intrabar.checkedAt<=15000&&intrabar.bar.t===Math.floor(now/Q)*Q&&intrabar.bar.t>=p.retestAt;
   const after=b.filter(v=>v.t>=p.retestAt!);
+  if(rangeReady)after.push(intrabar!.bar);
   const touched=after.some(v=>s===1?v.l<=stop||v.h>=target1:v.h>=stop||v.l<=target1)||(price!==null&&(s*(price-stop)<=0||s*(price-target1)>=0));
   const chased=price===null||Math.abs(price-entry)>.5*p.atr;
   const tooFar=risk/entry>.05;
@@ -99,8 +110,8 @@ export function makePlan(p:Pattern,b:Bar[],price:number|null,now:number):Plan|nu
     const key=s===1?'h':'l',v=prior[i][key];
     if(prior.slice(i-2,i+3).every((x,j)=>j===2||s*(v-x[key])>0)&&s*(v-entry)>0&&s*(v-target2)<0)obstacles.push(v);
   }
-  const retired=p.invalid||p.expired||touched||chased||tooFar||netRR<1.5||obstacles.length>0;
-  const reason=p.invalid?'Retest level was reclaimed against the setup.':p.expired?'Retest entry window expired.':touched?'Stop or first target already touched; do not reuse this plan.':chased?'Live price is more than 0.5 ATR from the confirmation close.':tooFar?'Structure stop exceeds 5% of entry.':obstacles.length?'A prior confirmed swing obstructs the 2R target.':netRR<1.5?'Estimated reward after costs is below 1.5R.':'Structure stop + 0.25 ATR buffer; targets at 1R and 2R before costs.';
+  const retired=p.invalid||p.expired||touched||!rangeReady||chased||tooFar||netRR<1.5||obstacles.length>0;
+  const reason=touched?'Stop or first target already touched; do not reuse this plan.':p.invalid?'Retest level was reclaimed against the setup.':p.expired?'Retest entry window expired.':!rangeReady?'Fresh current-candle range unavailable; entry withheld.':chased?'Live price is more than 0.5 ATR from the confirmation close.':tooFar?'Structure stop exceeds 5% of entry.':obstacles.length?'A prior confirmed swing obstructs the 2R target.':netRR<1.5?'Estimated reward after costs is below 1.5R.':'Structure stop + 0.25 ATR buffer; targets at 1R and 2R before costs.';
   return {entry,stop,target1,target2,riskPct:risk/entry*100,netRR,costPct:winCost/entry*100,validUntil:p.retestAt+Q,state:retired?'retired':'candidate',reason};
 }
 export function evaluate(input:Inputs,side:Side,now=Date.now()):Snapshot{
@@ -136,7 +147,7 @@ export function evaluate(input:Inputs,side:Side,now=Date.now()):Snapshot{
   const relative=coinRet!==null&&btcRet!==null?coinRet-btcRet:null;
   add('relative','Relative strength vs BTC','1h',input.symbol==='BTC'?'na':relative===null?'missing':s*relative>=.1?'pass':'wait',input.symbol==='BTC'?'Not applicable':relative===null?'Unavailable':`${signed(relative)} pp`,input.symbol==='BTC'?'BTC is the benchmark, so this check is excluded.':'Coin return minus BTC return across the same four closed 15m candles; needs 0.10 percentage points in the setup direction.','OKX matched perpetual candles',btcAligned?asOf:null);
   const fund=fundingValue(input.funding,now);
-  const plan=p&&q?makePlan(p,q,price,now):null;
+  const plan=p&&q?makePlan(p,q,price,now,input.intrabar):null;
   const required=checks.filter(c=>c.state!=='na').length,passed=checks.filter(c=>c.state==='pass').length;
   const reasons=checks.filter(c=>!['pass','na'].includes(c.state)).map(c=>`${c.name}: ${c.value}.`);
   const costCrowding=fund!==null&&s*fund.rate8h>.1;
@@ -156,5 +167,5 @@ export function evaluate(input:Inputs,side:Side,now=Date.now()):Snapshot{
   const expiresAt=Math.min(now+90000,plan?.state==='candidate'?plan.validUntil:now+90000,
     freshTicker?+t.ts+120000:now+90000,fund?+input.funding.ts+180000:now+90000,
     marketReady?market.at+10*MIN:now+90000,asOf?asOf+Q+2*MIN:now+90000);
-  return {symbol:input.symbol,at:now,asOf,price,change24:freshTicker&&+t.open24h>0?(price!/+t.open24h-1)*100:null,spread,verdict:ready?`${side} SETUP`:checks.some(c=>c.state==='missing')||!price||!fund||spread===null?'DATA UNAVAILABLE':'WAIT',side,passed,required,checks,reasons,plan,pattern:p,context:{funding8h:fund?.rate8h??null,fundingHours:fund?.hours??null,btcDom:marketReady&&finite(r.btcDom)?r.btcDom:null,usdtDom:marketReady&&finite(r.usdtDom)?r.usdtDom:null,vwap,marketBias:marketReady?r.bias:'UNAVAILABLE'},errors:input.errors,provider:'OKX',marketMode:'BASKET PROXY',retryAfterMs:60000,expiresAt};
+  return {symbol:input.symbol,at:now,asOf,price,change24:freshTicker&&+t.open24h>0?(price!/+t.open24h-1)*100:null,spread,verdict:ready?`${side} SETUP`:checks.some(c=>c.state==='missing')||!price||!fund||spread===null||plan?.reason.startsWith('Fresh current-candle range unavailable')?'DATA UNAVAILABLE':'WAIT',side,passed,required,checks,reasons,plan,pattern:p,context:{funding8h:fund?.rate8h??null,fundingHours:fund?.hours??null,btcDom:marketReady&&finite(r.btcDom)?r.btcDom:null,usdtDom:marketReady&&finite(r.usdtDom)?r.usdtDom:null,vwap,marketBias:marketReady?r.bias:'UNAVAILABLE'},errors:input.errors,provider:'OKX',marketMode:'BASKET PROXY',retryAfterMs:60000,expiresAt};
 }

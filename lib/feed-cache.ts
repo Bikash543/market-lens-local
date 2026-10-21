@@ -1,3 +1,4 @@
+import {retryPolicy} from '../local/retry-policy.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 export type CacheBox = {body:string;expires:number};
@@ -59,7 +60,7 @@ export function createFeedCache(storage?:Storage,storageMs=700,sharedWaitMs=3500
         return value;
       }catch(error){
         const e=error instanceof Error?error:new Error('Feed unavailable');
-        if(!failures.has(key)||failures.get(key)!.until<Date.now())failures.set(key,{until:Date.now()+8000,error:e});
+        if(!failures.has(key)||failures.get(key)!.until<Date.now())failures.set(key,{until:Date.now()+retryPolicy(e).delayMs,error:e});
         if(failures.size>1600)failures.delete(failures.keys().next().value!);
         if(saved&&options.onStale&&Date.now()<saved.expires+(options.staleMs??0))return options.onStale(JSON.parse(saved.body),e);
         throw e;

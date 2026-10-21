@@ -1,6 +1,6 @@
 import { deadline } from './feed-cache';
 
-const UA='MarketLensLocalCompass/1.0 (public market analytics)';
+const UA='AltcoinCompass/1.0 (+https://altcoin-compass-lab.rupeshwarsah35.chatgpt.site; public market analytics)';
 const cooldown=new Map<string,number>(),nextSlot=new Map<string,number>();
 const rateFailures=new Map<string,{count:number;at:number}>();
 const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));

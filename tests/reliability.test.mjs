@@ -143,3 +143,11 @@ test('a stuck coin does not stall other coins; stop aborts work and ignores late
   assert.ok(signals.every(s=>s.aborted));assert.equal(done.has('stuck'),false);
   assert.equal(started.length,4);
 });
+test('CMC public endpoints share pacing and rate-limit cooldown across different paths',async()=>{
+  const keys=[],gate={reserve:async key=>{keys.push(key);return Date.now()},defer:async(key)=>keys.push(key)};
+  await upstreamJSON('https://pro-api.coinmarketcap.com/public-api/v1/global-metrics/quotes/latest',{gate,fetcher:async()=>Response.json({data:{}})});
+  await assert.rejects(upstreamJSON('https://pro-api.coinmarketcap.com/public-api/v3/cryptocurrency/quotes/latest',{gate,fetcher:async()=>Response.json({},{status:429,headers:{'Retry-After':'90'}})}),/rate limited/);
+  let called=false;
+  await assert.rejects(upstreamJSON('https://pro-api.coinmarketcap.com/public-api/v3/cryptocurrency/listings/latest',{gate,fetcher:async()=>{called=true;return Response.json({})}}),/cooling down/);
+  assert.equal(called,false);assert.deepEqual([...new Set(keys)],['pro-api.coinmarketcap.com/public-pool']);
+});

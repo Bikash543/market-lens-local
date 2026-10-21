@@ -5,6 +5,7 @@ export function inspectHealth(status:number,body:string){
   if(status<200||status>=300)return {healthy:false,message:String(value?.msg||value?.error||`HTTP ${status}`).slice(0,350)};
   if(value?.error||value?.code!==undefined&&!['0','200'].includes(String(value.code)))
     return {healthy:false,message:String(value.msg||value.error||`Provider error ${value.code}`).slice(0,350)};
+  if(value?.status?.error_code)return {healthy:false,message:String(value.status.error_message||'Provider rejected request').slice(0,350)};
   if(!value||typeof value!=='object'||!Object.keys(value).length)return {healthy:false,message:'Empty provider response'};
   return {healthy:true,message:'Public data endpoint responded successfully'};
 }

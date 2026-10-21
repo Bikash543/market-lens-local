@@ -9,6 +9,12 @@ type Result={coin:string;interval:string;status:string;seconds:number;closedAt?:
 export default function ConnectionCheck(){
   const [rows,setRows]=useState<Result[]>([]),[running,setRunning]=useState(false),[tested,setTested]=useState('');
   const [dominance,setDominance]=useState<Dominance|null>(null),[dominanceError,setDominanceError]=useState('');
+  const [health,setHealth]=useState<any>(null),[healthBusy,setHealthBusy]=useState(false),[healthError,setHealthError]=useState('');
+  async function checkProviders(){
+    if(healthBusy)return;setHealthBusy(true);setHealthError('');
+    try{const r=await fetch('/api/health',{cache:'no-store',signal:AbortSignal.timeout(15000)});const d:any=await r.json();if(!r.ok)throw new Error(d.error||'Health check failed');setHealth(d)}
+    catch(e){setHealthError((e as Error).message)}finally{setHealthBusy(false)}
+  }
   const controller=useRef<AbortController|null>(null);
   useEffect(()=>()=>controller.current?.abort(),[]);
   async function run(){
@@ -57,6 +63,10 @@ export default function ConnectionCheck(){
       <tbody>{rows.map(r=><tr key={r.coin+r.interval}><td>{r.coin}</td><td>{r.interval}</td><td className={r.status==='PASS'?'positive':'negative'} title={r.error}>{r.status}{r.error&&<small>{r.error}</small>}</td><td>{r.signal??'Withheld'}</td><td>{r.score!==undefined?`${r.score}/6`:'—'}</td><td>{r.seconds.toFixed(2)}</td><td>{r.closedAt?new Date(r.closedAt).toISOString().replace('.999Z','Z'):'—'}</td><td>{r.oiAt?new Date(r.oiAt).toISOString().replace('.000Z','Z'):'—'}</td></tr>)}</tbody>
     </table></div>
     <p>A successful check confirms access and rule evaluation at the displayed time, not future uptime or strategy profitability. Missing or stale data cannot create a full setup.</p>
+    <h2>All provider connections</h2>
+    <button className="button secondary" disabled={healthBusy} onClick={()=>void checkProviders()}>{healthBusy?'Checking providers…':'Check all 7 providers'}</button>
+    {healthError&&<p role="alert">{healthError}</p>}
+    {health&&<><p>Checked {new Date(health.checkedAt).toLocaleString()}. {health.note}</p><ul>{health.checks.map((c:any)=><li key={c.provider}>{c.provider}: <b className={c.healthy?'positive':'negative'}>{c.healthy?'Connected':'Unavailable'}</b> — {c.message}</li>)}</ul><p>Direction readiness: {health.readiness.direction.ready?'Ready':health.readiness.direction.pending.join(' ')}</p><p>Dominance recovery: {health.readiness.dominanceRecovery?.message||'Not checked yet'}</p></>}
     {!!rows.length&&<details><summary>Inspect JSON results</summary><pre aria-label="Validation results JSON">{JSON.stringify(report,null,2)}</pre></details>}
   </main>;
 }

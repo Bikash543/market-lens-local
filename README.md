@@ -17,7 +17,9 @@ The installer is **unsigned**, so Windows may display an unknown-publisher or Sm
 
 Installed app data is stored in `%LOCALAPPDATA%\Market Lens Local\data`, separately from the program files. Updates and uninstall preserve this folder. Use the Start menu's **Stop background collection** shortcut to stop the service; Windows Settings → Apps removes the program. The installer does not automatically update itself.
 
-The first measured 4h bias still requires real history. Keep the PC awake and online for approximately four hours; keeping a browser open is unnecessary.
+The v0.3.0 installer predates the source updates described below. Downloading source from `main` includes the latest fixes; the existing installer has not been rebuilt with them.
+
+In current source, aggregate OI can recover 15m, 1h and 4h comparisons from official OKX history. This is separate from market-direction bias: an optional CoinMarketCap key enables verified historical recovery where the account has access; otherwise direction uses collected same-provider history. Missing history is never fabricated.
 
 Developers can use the source installation below. Only run one installation on the default ports at a time.
 
@@ -34,6 +36,18 @@ Developers can use the source installation below. Only run one installation on t
 
 Also includes light/dark themes, desktop and Windows sign-in shortcuts, refresh loading indicators, success notifications after rendering, and clear partial/failure notifications.
 
+## Latest source improvements
+
+- Aggregate OI includes only exchange-classified, active crypto USDT perpetuals. Stocks, commodities and other non-crypto contracts are excluded from both endpoints of every comparison.
+- Historical OI recovery continues toward full coverage after reaching the minimum usable threshold. Each timeframe shows matched-contract counts, notional coverage and remaining errors.
+- Manual refresh and background collection remain independent. Navigation restores the displayed view; it never starts a market scan.
+- CoinLore pages retain their original timestamps and are paired only when their publication times align. Saved, pending and fresh states are distinguished.
+- All Markets can sort OI increases highest first or OI changes lowest first, with stale/missing observations last.
+- Touched trade plans remain retired; improved candle checks prevent incomplete or stale data from becoming confirmation.
+- Optional provider keys use Windows credential protection. Bounded caches, log rotation and lossless chart storage preserve watchlists and saved analysis.
+
+See [aggregate OI methodology](docs/aggregate-oi-history.md). No personal watchlist, API key, history database or runtime log is included in this repository.
+
 ## Efficiency improvements in 0.3.0
 
 - Reuses current closed-candle analyses in one bulk check; funding remains independently fresh.
@@ -49,7 +63,7 @@ The signal rules are unchanged. Manual refresh, watchlists, themes, all workspac
 
 - **Main screener:** Binance USDⓈ-M USDT perpetuals are preferred. OKX crypto USDT perpetuals are a clearly labelled fallback. Analyses identify their exchange and use that exchange's inputs.
 - **Market direction:** CoinLore observations provide a top-125 market basket. Stablecoin exclusions, coverage thresholds and matching observation windows are applied. Basket estimates are **not** TradingView's licensed TOTAL3ES, TOTAL2ES, BTC.D or USDT.D indices.
-- **Global dominance:** CoinPaprika is preferred, with CoinGecko fallback. Provider-specific history is kept separate.
+- **Global dominance:** Optional CoinMarketCap data and history, with CoinPaprika/CoinGecko fallbacks. Provider-specific history is kept separate; availability depends on the API account and provider response.
 - **Supporting context and Trade Confirmation:** OKX closed candles, open-interest statistics and spot-flow samples. Missing inputs remain unavailable.
 - **Signals:** Rule agreement is an evidence score, not a win probability. These experimental rules have no validated profitability claim.
 

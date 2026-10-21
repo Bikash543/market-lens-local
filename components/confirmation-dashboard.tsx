@@ -2,7 +2,9 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {Activity,ArrowDownRight,ArrowUpRight,ArrowRight,Check,CheckCheck,ChevronDown,Compass,Copy,Download,FlaskConical,Info,LoaderCircle,Moon,RefreshCw,ShieldCheck,SlidersHorizontal,Sun,Target,Waves,Search,X} from 'lucide-react';
 import type {Snapshot,Side,State} from '@/lib/confirmation';
+import {usePanelActive} from './panel-activity';
 import {useFrameTheme} from './frame-theme';
+import DerivativesContext from './derivatives-context';
 import CoinSearch from './confirmation-coin-search';
 import {loadConfirmationInputs} from '@/lib/confirmation-browser';
 import RefreshFeedback,{useRefreshFeedback} from './refresh-feedback';
@@ -14,6 +16,7 @@ const pct=(n:number|null|undefined,d=2)=>n==null?'—':`${n>=0?'+':''}${n.toFixe
 const utc=(n:number|null|undefined)=>n?new Date(n).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',timeZone:'UTC'})+' UTC':'—';
 export default function Dashboard(){
   useFrameTheme();
+  const panelActive=usePanelActive();
   const feedback=useRefreshFeedback();
   const [symbol,setSymbol]=useState(''),[side,setSide]=useState<'AUTO'|Side>('AUTO');
   const [data,setData]=useState<Analysis|null>(null);
@@ -55,7 +58,7 @@ export default function Dashboard(){
   useEffect(()=>()=>{sequence.current++;controller.current?.abort()},[]);
   useEffect(()=>{const sync=()=>setDark(document.documentElement.dataset.theme==='dark');sync();const observer=new MutationObserver(sync);observer.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});return()=>observer.disconnect()},[]);
   // A single expiry update replaces continuous redraws, without extending a plan.
-  useEffect(()=>{if(!data)return;const update=()=>setNow(Date.now());const t=setTimeout(update,Math.max(0,data.expiresAt-Date.now()+1));document.addEventListener('visibilitychange',update);return()=>{clearTimeout(t);document.removeEventListener('visibilitychange',update)}},[data]);
+  useEffect(()=>{if(!data||!panelActive)return;const update=()=>setNow(Date.now());update();const t=setTimeout(update,Math.max(0,data.expiresAt-Date.now()+1));document.addEventListener('visibilitychange',update);return()=>{clearTimeout(t);document.removeEventListener('visibilitychange',update)}},[data,panelActive]);
   const refresh=()=>{void load()};
   useEffect(()=>{if(modal)dialog.current?.showModal();else dialog.current?.close()},[modal]);
   const changeTheme=()=>{const next=!dark;setDark(next);document.documentElement.dataset.theme=next?'dark':'light';try{localStorage.setItem('market-lens-theme',next?'dark':'light')}catch{}};
@@ -85,6 +88,7 @@ export default function Dashboard(){
         <div className="page-title"><div><span className="eyebrow">BEFORE THE ENTRY</span><h1>A clearer case for your trade.</h1><p>Seven checks. One 15-minute setup. Evidence before action.</p></div><button className="subtle-button" onClick={()=>setModal(true)}><Info size={16}/> How it works</button></div>
         <CoinSearch selected={symbol} onSelect={selectCoin} onEdit={editCoin}/>
         <section className="selection-bar"><div className="asset-title"><h2>{symbol||'No coin selected'}{symbol&&<span> / USDT</span>}</h2>{symbol&&<><span className="asset-name">OKX perpetual</span>{data&&<b className="asset-price">${price(livePrice)}</b>}</>}</div><div className="selection-actions"><span className="timeframe"><Activity size={13}/> 15m</span><div className="segmented" aria-label="Setup direction">{(['AUTO','LONG','SHORT'] as const).map(s=><button key={s} className={side===s?'on':''} aria-pressed={side===s} onClick={()=>selectSide(s)}>{s==='AUTO'?'Auto':s==='LONG'?'Long':'Short'}</button>)}</div><button className="analyse-button" onClick={refresh} disabled={loading||!symbol} aria-label="Analyse it">{loading?<LoaderCircle className="spin" size={17}/>:<Search size={17}/>} {loading?'Analysing…':'Analyse it'}</button></div></section>
+        {data&&<DerivativesContext symbol={symbol} feedback={feedback}/>}
         {error&&<div className="error-banner" role="alert">{error}</div>}
         {!!data?.errors.length&&<details className="error-banner"><summary>Unavailable feeds ({data.errors.length}) — view reasons</summary><ul>{data.errors.map((e,i)=><li key={i}>{e}</li>)}</ul></details>}
         {!data&&!loading?<section className="analysis-empty" aria-label="Analysis not started"><div className="analysis-empty-icon"><Search size={28}/></div><h2>{symbol?`${symbol} is ready to analyse`:'Find the coin you want to check.'}</h2><p>{symbol?'Click Analyse it to check this coin’s market structure, spot flow and positioning.':'Search a symbol, select its USDT perpetual, then click Analyse it.'}</p><span>Only the selected coin is analysed, with BTC and overall market context as reference inputs.</span></section>:<>

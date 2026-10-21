@@ -17,9 +17,7 @@ export async function POST(req:Request){
           if(!body.background)await saveAnalysisDetails(body.exchange,body.interval,[cached]);
           return body.summary?compactAnalysis(cached):cached;
         }
-        const control=process.env.MARKET_LENS_CONTROL_ORIGIN||'http://127.0.0.1:8788';
-        if(!/^http:\/\/127\.0\.0\.1:\d{4,5}$/.test(control))throw new Error('Invalid local control origin');
-        const r=await fetch(control+'/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol,interval:body.interval,exchange:body.exchange,priority:body.background?0:body.selected?8:4}),signal:AbortSignal.timeout(45000)});
+        const r=await fetch((process.env.MARKET_LENS_CONTROL_ORIGIN||'http://127.0.0.1:8788')+'/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol,interval:body.interval,exchange:body.exchange,priority:body.background?0:body.selected?8:4}),signal:AbortSignal.timeout(45000)});
         const row:any=await r.json();
         if(!r.ok)throw new Error(row.error||'Shared scan unavailable');
         if(!body.background&&!row.error)await saveAnalysisDetails(body.exchange,body.interval,[row]);

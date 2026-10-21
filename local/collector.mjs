@@ -1,13 +1,15 @@
 import {mkdir,writeFile,rename,readdir,unlink} from 'node:fs/promises';
 import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
+import {retryPolicy} from './retry-policy.mjs';
 import {nextCollectionAt} from './cadence.mjs';
 import {recoverHistory} from './recover-history.mjs';
+import {dataReadiness} from '../lib/data-readiness.mjs';
 
 export async function runCollector({root,dataDirectory=path.join(root,'data'),origin='http://127.0.0.1:8787',signal:parentSignal,log}){
   const lifetime=new AbortController(),signal=AbortSignal.any([parentSignal,lifetime.signal]);
   let rows=[],exchange='',watch=[],lastProfile=0,scanCooldown=0;
-  const attempted=new Map(),pending=new Set(),due=new Map();
+  const attempted=new Map(),pending=new Set(),due=new Map(),failures=new Map();
   const state={startedAt:Date.now(),phase:'Starting collector',marketAt:null,contextAt:null,directionAt:null,nextContextAt:null,contextFeeds:{},scanned:0,loaded:0,failed:0,reused:0,recovery:null,errors:[]};
   const pause=ms=>sleep(ms,undefined,{signal}).catch(()=>{});
   function failure(label,e){
@@ -17,7 +19,9 @@ export async function runCollector({root,dataDirectory=path.join(root,'data'),or
   async function request(route,body,timeout=25000){
     const r=await fetch(origin+route,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,
       body:body?JSON.stringify(body):undefined,signal:AbortSignal.any([signal,AbortSignal.timeout(timeout)])});
-    const d=await r.json();if(!r.ok)throw new Error(d.error||`Local API ${r.status}`);return d;
+    const text=await r.text();let d;
+    try{d=JSON.parse(text)}catch{throw new Error(`Local API ${r.status}: ${text.slice(0,240)}`)}
+    if(!r.ok)throw new Error(d.error||`Local API ${r.status}`);return d;
   }
   async function heartbeat(){
     try{await request('/api/local/status',{...state,universe:rows.length,exchange,watchCount:watch.length},5000)}
@@ -51,13 +55,54 @@ export async function runCollector({root,dataDirectory=path.join(root,'data'),or
         // already completed candle windows, including after service restarts.
         for(const interval of ['15m','1h']){
           if(signal.aborted||!rows.length)break;
-          const saved=await request('/api/local/snapshot',{exchange,interval,symbols:rows.map(r=>r.symbol),background:true});
+          const saved=await request(`/api/local/work-status?exchange=${exchange}&interval=${interval}`);
           const step=interval==='15m'?900000:3600000;
-          for(const symbol of saved.reused??[])due.set(`${exchange}:${symbol}:${interval}`,Math.floor(Date.now()/step)*step+step+15000);
-          state.reused+=(saved.reused??[]).length;
+          for(const row of saved.rows??[]){
+            if(!row.error&&row.venue===exchange&&row.horizon===interval&&row.closedAt===Math.floor(Date.now()/step)*step-1&&Math.abs(row.oiAt-(row.closedAt+1))<60000){due.set(`${exchange}:${row.symbol}:${interval}`,Math.floor(Date.now()/step)*step+step+15000);state.reused++}
+          }
         }
       }catch(e){if(!signal.aborted)failure('Market snapshot',e)}
       next=nextCollectionAt(next,60000);
+    }
+  }
+  async function collectContext(route){
+    const attemptedAt=Date.now();
+    try{
+      const result=await request(route),kind=route==='/api/global'?'global':new URL(route,origin).searchParams.get('kind')||'market';
+      const readiness=dataReadiness(kind,result);
+      const error=result.stale?(result.refreshError||'Provider snapshot is stale'):null;
+      state.contextFeeds[route]={attemptedAt,completedAt:Date.now(),observationAt:result.at??result.updated??null,error,...readiness};
+      state.contextAt=Date.now();if(route==='/api/direction')state.directionAt=result.at;
+      if(error)failure(route,new Error(error));
+    }catch(e){
+      state.contextFeeds[route]={attemptedAt,completedAt:Date.now(),ready:false,error:e.message};
+      if(!signal.aborted)failure(route,e);
+    }
+  }
+  async function directionLoop(){
+    let next=Date.now();
+    while(!signal.aborted){
+      await pause(Math.max(0,next-Date.now()));if(signal.aborted)break;
+      await collectContext('/api/direction');
+      next=nextCollectionAt(next,60000);
+    }
+  }
+  async function oiHistoryLoop(){
+    let restarts=0;
+    while(!signal.aborted){
+      let delay=60000;
+      try{
+        const result=await request('/api/local/oi-history',{},25000);
+        restarts=0;
+        state.oiHistory={...result,checkedAt:Date.now()};
+        delay=Math.max(1000,Math.min(300000,result.retryAfterMs||60000));
+      }catch(e){
+        // A local worker can restart between idempotent recovery batches.
+        // Resume from disk promptly, without shortening upstream cooldowns.
+        if(/worker restarted mid-request/i.test(e.message))delay=Math.min(60000,3000*2**Math.min(restarts++,4));
+        if(!signal.aborted)failure('OI historical recovery',e);
+      }
+      await pause(delay);
     }
   }
   async function contexts(){
@@ -65,23 +110,13 @@ export async function runCollector({root,dataDirectory=path.join(root,'data'),or
     while(!signal.aborted){
       state.nextContextAt=next;
       await pause(Math.max(0,next-Date.now()));if(signal.aborted)break;
-      if(!lastCycle||Date.now()-lastCycle>600000)state.recovery=await recoverHistory(dataDirectory,request,log);
+      if(!lastCycle||Date.now()-lastCycle>600000)state.recovery=await recoverHistory(root,request,log);
       lastCycle=Date.now();
       // Market history has its own cadence, independent of quote/scan failures.
       // Fetch it first; optional context cannot delay the four-hour baseline.
-      for(const route of ['/api/direction','/api/global','/api/direction?kind=btc','/api/direction?kind=oi','/api/direction?kind=flow']){
+      for(const route of ['/api/global','/api/direction?kind=btc','/api/direction?kind=oi','/api/direction?kind=flow']){
         if(signal.aborted)break;
-        const attemptedAt=Date.now();
-        try{
-          const result=await request(route);
-          const error=result.stale?(result.refreshError||'Provider snapshot is stale'):null;
-          state.contextFeeds[route]={attemptedAt,completedAt:Date.now(),observationAt:result.at??result.updated??null,error};
-          if(error)failure(route,new Error(error));
-          else{state.contextAt=Date.now();if(route==='/api/direction')state.directionAt=result.at}
-        }catch(e){
-          state.contextFeeds[route]={attemptedAt,completedAt:Date.now(),error:e.message};
-          if(!signal.aborted)failure(route,e);
-        }
+        await collectContext(route);
         await pause(1200);
       }
       if(!signal.aborted)try{await backup()}catch(e){failure('Backup',e)}
@@ -114,18 +149,23 @@ export async function runCollector({root,dataDirectory=path.join(root,'data'),or
           scanCooldown=Math.max(scanCooldown,Date.now()+Math.max(5000,Math.min(300000,row.retryAfterMs||60000)));
           state.phase='Exchange cooldown; collection resumes automatically';
         }
-        if(!row||row.error)throw new Error(row?.error||'No analysis returned');
+        if(!row||row.error)throw Object.assign(new Error(row?.error||'No analysis returned'),{retryAfterMs:row?.retryAfterMs});
+        failures.delete(job.key);
         const step=job.interval==='15m'?900000:3600000,boundary=Math.floor(Date.now()/step)*step;
         due.set(job.key,row.closedAt===boundary-1?boundary+step+15000:Date.now()+60000);
         state.loaded++;
-      }catch(e){state.failed++;if(!signal.aborted)failure(`${job.symbol} ${job.interval}`,e)}
+      }catch(e){
+        const count=(failures.get(job.key)||0)+1;failures.set(job.key,count);
+        const policy=retryPolicy(e,count);due.set(job.key,Date.now()+policy.delayMs);
+        state.failed++;if(!signal.aborted)failure(`${job.symbol} ${job.interval} (${policy.kind}; retry in ${Math.round(policy.delayMs/1000)}s)`,e);
+      }
       finally{state.scanned++;pending.delete(job.key)}
     }
   }
   async function pulseLoop(){
     while(!signal.aborted){await heartbeat();await pause(15000)}
   }
-  const tasks=[quotes(),contexts(),scanLoop(),scanLoop(),pulseLoop()];
+  const tasks=[quotes(),directionLoop(),contexts(),oiHistoryLoop(),scanLoop(),scanLoop(),pulseLoop()];
   try{await Promise.all(tasks)}
   finally{lifetime.abort();await Promise.allSettled(tasks)}
 }

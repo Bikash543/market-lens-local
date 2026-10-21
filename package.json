@@ -10,7 +10,7 @@
     "dev": "node scripts/run-framework.mjs dev",
     "build": "node scripts/run-framework.mjs build",
     "start": "node local/supervisor.mjs",
-    "test": "node --experimental-strip-types --experimental-specifier-resolution=node --test tests/*.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

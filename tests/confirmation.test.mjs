@@ -8,7 +8,7 @@ function setup(side='LONG'){
   Object.assign(q.at(-2),{o:100,h:104,l:99.5,c:103,v:200});
   Object.assign(q.at(-1),{o:102,h:103.5,l:100.9,c:103,v:110});
   if(side==='SHORT')for(const x of q){const {o,h,l,c}=x;Object.assign(x,{o:200-o,h:200-l,l:200-h,c:200-c})}
-  return {symbol:'ETH',q,btcQ:series(),btcH:series(42,H),spot:[5,10,15].map(m=>[String(end-m*60000),side==='LONG'?'100':'200',side==='LONG'?'200':'100']),oi:[[end-300000,1002],[end-Q-300000,1000],[end-H-300000,999]],funding:{fundingRate:'0.0001',fundingTime:end,nextFundingTime:end+8*H,ts:now},ticker:{last:side==='LONG'?'103':'97',ts:now,askPx:'103.01',bidPx:'103',open24h:'100',volCcy24h:'200000'},market:{at:now,stale:false,readings:{'1h':{bias:side,alt:side==='LONG'?.3:-.3,coverage:1,breadth:{available:110},btcDom:0,usdtDom:0}}},errors:[]};
+  return {symbol:'ETH',intrabar:{bar:{t:end,o:side==='LONG'?103:97,h:side==='LONG'?103.1:97.1,l:side==='LONG'?102.9:96.9,c:side==='LONG'?103:97,v:10},checkedAt:now},q,btcQ:series(),btcH:series(42,H),spot:[5,10,15].map(m=>[String(end-m*60000),side==='LONG'?'100':'200',side==='LONG'?'200':'100']),oi:[[end-300000,1002],[end-Q-300000,1000],[end-H-300000,999]],funding:{fundingRate:'0.0001',fundingTime:end,nextFundingTime:end+8*H,ts:now},ticker:{last:side==='LONG'?'103':'97',ts:now,askPx:'103.01',bidPx:'103',open24h:'100',volCcy24h:'200000'},market:{at:now,stale:false,readings:{'1h':{bias:side,alt:side==='LONG'?.3:-.3,coverage:1,breadth:{available:110},btcDom:0,usdtDom:0}}},errors:[]};
 }
 test('only a later closed bar can confirm a retest',()=>{
   const x=setup();assert.equal(findPattern(x.q.slice(0,-1),'LONG',end-Q+1000).retestAt,null);

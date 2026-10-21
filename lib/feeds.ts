@@ -1,7 +1,9 @@
 import { env } from 'cloudflare:workers';
 import {sharedOKX,sharedOKXCandles} from './shared-feeds';
 import {reusableAnalysis} from './analysis-reuse';
+import {cmcCurrent,recoverDominance} from './provider-feeds';
 import { analyze } from './engine';
+import {validatedRawCandles,interestTTL} from './candle-window';
 import { normalizeOKX } from './okx';
 import { createFeedCache, deadline } from './feed-cache';
 import { upstreamJSON, type UpstreamOptions, type RequestGate } from './upstream';
@@ -86,9 +88,10 @@ export async function market(){
   }
 }
 let globalProvider='CoinPaprika';
-export async function globalMarket(){return cache('global:v4',300000,async()=>{
+export async function globalMarket(){return cache('global:v5',60000,async()=>{
   let btc:number,usdt:number,time:number,marketCap:number,source:string;
   async function load(provider:string){
+    if(provider==='CoinMarketCap')return cmcCurrent();
     if(provider==='CoinGecko'){
       const g=(await json('https://api.coingecko.com/api/v3/global',{timeoutMs:3500,attempts:1})).data;
       return {btc:+g?.market_cap_percentage?.btc,usdt:+g?.market_cap_percentage?.usdt,time:+g?.updated_at*1000,marketCap:+g.total_market_cap?.usd,source:provider};
@@ -102,7 +105,12 @@ export async function globalMarket(){return cache('global:v4',300000,async()=>{
     return d;
   };
   let data;
-  try{data=await checked(globalProvider)}catch{data=await checked(globalProvider==='CoinPaprika'?'CoinGecko':'CoinPaprika')}
+  // Historical recovery is optional; a key or upstream failure cannot disable existing feeds.
+  try{data=await recoverDominance()}catch{}
+  if(!data){
+    for(const provider of [...new Set([globalProvider,'CoinPaprika','CoinGecko','CoinMarketCap'])]){try{data=await checked(provider);break}catch{}}
+  }
+  if(!data)throw new Error('All dominance providers are unavailable or stale');
   ({btc,usdt,time,marketCap,source}=data);globalProvider=source;
   if(![btc,usdt,time,marketCap].every(Number.isFinite)||!(marketCap>0)||btc<=0||usdt<=0||btc>100||usdt>100)throw new Error('Dominance fields are unavailable');
   if(Date.now()-time>1800000)throw new Error(`${source} dominance data is stale`);
@@ -139,15 +147,16 @@ export async function scan(symbol:string,interval:string,exchange:Venue){return 
     const [info,rates,n]=await Promise.all([
       okxInfo(),okxFunding(),
       cache(`window:v1:OKX:${symbol}:${interval}`,(v:ReturnType<typeof normalizeOKX>)=>windowCacheMs(interval,v.raw.at(-1)?.[6]??0),async()=>{
-        // Candles are the dependency for both other series. Do not spend their
-        // quotas if the candle endpoint is already cooling down.
-        const bars=await sharedOKXCandles(symbol.slice(0,-4),period,99);
-        const [flow,interest]=await Promise.all([
-          okxRecent(`/api/v5/rubik/stat/taker-volume-contract?${query}&period=${period}&unit=2&limit=100`),
+        const [priceFlow,interest]=await Promise.all([
+          cache(`price-flow:v1:OKX:${symbol}:${interval}`,(v:any)=>windowCacheMs(interval,+v.raw.at(-1)[6]),async()=>{
+            const bars=await sharedOKXCandles(symbol.slice(0,-4),period,99);
+            const flow=await okxRecent(`/api/v5/rubik/stat/taker-volume-contract?${query}&period=${period}&unit=2&limit=100`);
+            const n=normalizeOKX(bars,flow,[],interval);
+            return {...n,raw:validatedRawCandles(n.raw,interval)};
+          }),
           okxRecent(`/api/v5/rubik/stat/contracts/open-interest-history?${query}&period=${period}&limit=8`),
         ]);
-        const window=normalizeOKX(bars,flow,interest,interval);
-        // Validate the entire window before keeping it for the rest of this bar.
+        const window={...priceFlow,oi:normalizeOKX([],[],interest,interval).oi};
         analyze(symbol,interval,window.raw,window.oi,0);
         return window;
       }),
@@ -162,7 +171,10 @@ export async function scan(symbol:string,interval:string,exchange:Venue){return 
     const querySymbol=encodeURIComponent(symbol);
     const [info,marks,intervals,window]=await Promise.all([binanceInfo(),binanceMarks(),binanceIntervals(),
       cache(`window:v2:Binance:${symbol}:${interval}`,(v:any)=>windowCacheMs(interval,v.closedAt),async()=>{
-        const [bars,interest]=await Promise.all([json(`${BASE}/fapi/v1/klines?symbol=${querySymbol}&interval=${interval}&limit=99`),json(`${BASE}/futures/data/openInterestHist?symbol=${querySymbol}&period=${interval}&limit=8`)]);
+        const [bars,interest]=await Promise.all([
+          cache(`candles:v1:Binance:${symbol}:${interval}`,(v:any[])=>windowCacheMs(interval,+v.at(-1)![6]),async()=>validatedRawCandles(await json(`${BASE}/fapi/v1/klines?symbol=${querySymbol}&interval=${interval}&limit=99`),interval)),
+          cache(`interest:v1:Binance:${symbol}:${interval}`,(v:any[])=>interestTTL(v,interval),()=>json(`${BASE}/futures/data/openInterestHist?symbol=${querySymbol}&period=${interval}&limit=8`)),
+        ]);
         const validated=analyze(symbol,interval,bars,interest,0);
         return {bars,interest,closedAt:validated.closedAt};
       })]);

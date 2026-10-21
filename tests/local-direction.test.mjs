@@ -12,7 +12,7 @@ const rows=Array.from({length:125},(_,i)=>({
   price_usd:String(i<2?80000/(i+1):i<4?1:100),market_cap_usd:String(1e12/(i+1)),volume24:'1000000',percent_change_1h:'0.5'
 }));
 const pages=at=>[{info:{time:at/1000},data:rows.slice(0,100)},{info:{time:at/1000},data:rows.slice(100)}];
-const observation=at=>({at,prices:Object.fromEntries(rows.map((r,i)=>[r.id,Number(r.price_usd)/(i===2||i===3?1:1.01)]))});
+const observation=at=>({at,version:2,times:Object.fromEntries(rows.map(r=>[r.id,at])),prices:Object.fromEntries(rows.map((r,i)=>[r.id,Number(r.price_usd)/(i===2||i===3?1:1.01)]))});
 function fullSnapshot(){
   const converted=convertCoinLore(pages(now),[observation(now-900000),observation(now-14400000)],now);
   return {...analyze(converted.tickers,stableIds,now),baselineFourHoursMinutes:converted.baselineFourHoursMinutes,baselineMinutes:15};

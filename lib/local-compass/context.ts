@@ -31,19 +31,32 @@ export function spotFlow(raw:any[],now=Date.now()){
   const delta=rows.reduce((s,v)=>s+v.buy-v.sell,0);
   return {at:rows.at(-1)!.at,imbalance:delta/volume*100,delta,volume};
 }
-export type Interest={at:number;values:Record<string,number>};
+export type Interest={at:number;values:Record<string,number>;source?:'OKX historical API'|'Local collection';universe?:string};
 export function interest(raw:any[],now=Date.now()):Interest{
   const relevant=raw.filter(v=>v.instId?.endsWith('-USDT-SWAP'));
   const rows=relevant.filter(v=>+v.oiUsd>0&&Number.isFinite(+v.oiUsd)&&now-(+v.ts)<=180000&&+v.ts<=now+10000);
   if(rows.length<50||rows.length<relevant.length*.9)throw new Error('Incomplete or stale OKX open interest');
-  return {at:Math.min(...rows.map(v=>+v.ts)),values:Object.fromEntries(rows.map(v=>[v.instId,+v.oiUsd]))};
+  return {at:Math.min(...rows.map(v=>+v.ts)),values:Object.fromEntries(rows.map(v=>[v.instId,+v.oiUsd])),source:'Local collection'};
+}
+export function interestCoverage(current:Interest,baseline:Interest){
+  const all=Object.keys(current.values).filter(k=>Number.isFinite(current.values[k])&&current.values[k]>0);
+  const keys=all.filter(k=>Number.isFinite(baseline.values[k])&&baseline.values[k]>0);
+  const total=all.reduce((s,k)=>s+current.values[k],0),matched=keys.reduce((s,k)=>s+current.values[k],0);
+  return {keys,coverage:keys.length/Math.max(1,all.length),notionalCoverage:total>0?matched/total:0};
+}
+export function bestInterestBaseline(current:Interest,history:Interest[],minutes:number){
+  const target=current.at-minutes*60000,tolerance=minutes===15?180000:300000;
+  // Prefer wider coverage within the SAME time tolerance, then the nearest time.
+  // A slightly nearer partial point must not hide a complete baseline.
+  return history.filter(v=>v.at<current.at&&Math.abs(v.at-target)<=tolerance)
+    .map(baseline=>({baseline,...interestCoverage(current,baseline)}))
+    .sort((a,b)=>Number(b.keys.length>=50&&b.coverage>=.9&&b.notionalCoverage>=.9)-Number(a.keys.length>=50&&a.coverage>=.9&&a.notionalCoverage>=.9)||b.keys.length-a.keys.length||b.notionalCoverage-a.notionalCoverage||Math.abs(a.baseline.at-target)-Math.abs(b.baseline.at-target))[0]??null;
 }
 export function compareInterest(current:Interest,history:Interest[],minutes:number){
-  const target=current.at-minutes*60000,tolerance=minutes===15?180000:300000;
-  const baseline=history.filter(v=>v.at<current.at&&Math.abs(v.at-target)<=tolerance).sort((a,b)=>Math.abs(a.at-target)-Math.abs(b.at-target))[0];
-  if(!baseline)return null;
-  const keys=Object.keys(current.values).filter(k=>baseline.values[k]>0);
-  if(keys.length<Object.keys(current.values).length*.9)return null;
+  const selected=bestInterestBaseline(current,history,minutes);
+  if(!selected)return null;
+  const {baseline,keys,coverage,notionalCoverage}=selected;
+  if(keys.length<50||coverage<.9||notionalCoverage<.9)return null;
   const before=keys.reduce((s,k)=>s+baseline.values[k],0),after=keys.reduce((s,k)=>s+current.values[k],0);
-  return {change:(after/before-1)*100,minutes:(current.at-baseline.at)/60000,count:keys.length};
+  return {change:(after/before-1)*100,minutes:(current.at-baseline.at)/60000,count:keys.length,coverage,notionalCoverage,from:baseline.at,to:current.at,source:baseline.source??'Local collection'};
 }

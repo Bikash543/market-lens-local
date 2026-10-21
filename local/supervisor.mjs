@@ -6,15 +6,19 @@ import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {runCollector} from './collector.mjs';
 import {startExchangeNetwork} from './exchange-network.mjs';
+import {maintainStorage,storageStatus,trimLogs} from './storage-maintenance.mjs';
+import {loadProviderSettings,providerStatus,saveProviderKey} from './provider-settings.mjs';
 import {createWorkQueue} from './work-queue.mjs';
 import {runtimeConfig} from './runtime-config.mjs';
 const config=runtimeConfig(),root=config.root;
+process.env.MARKET_LENS_DATA_DIR=config.data;
 const logs=path.join(config.data,'logs');mkdirSync(logs,{recursive:true});
 const logfile=path.join(logs,'service.log');
 function log(message){
   try{
     if(existsSync(logfile)&&statSync(logfile).size>4_000_000)renameSync(logfile,path.join(logs,`service-${Date.now()}.log`));
     appendFileSync(logfile,new Date().toISOString()+' '+String(message).slice(0,6000)+'\n');
+    trimLogs(root);
   }catch{}
 }
 let serverProcess=null,stopping=false,collectorAbort=null,exchangeNetwork=null;
@@ -39,6 +43,20 @@ const control=createServer(async(req,res)=>{
     res.writeHead(403);res.end('Local access only');return;
   }
   res.setHeader('Content-Type','application/json');
+  if(req.url==='/providers'){
+    if(req.headers.origin){res.writeHead(403);res.end('{}');return}
+    try{
+      if(req.method==='GET'){res.end(JSON.stringify(providerStatus()));return}
+      if(req.method!=='POST')throw new Error('Unsupported method');
+      let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>1000)throw new Error('Settings too large')}
+      const body=JSON.parse(raw);res.end(JSON.stringify(await saveProviderKey(root,body.provider,body.key)));
+    }catch(e){res.writeHead(400);res.end(JSON.stringify({error:e.message}))}return;
+  }
+  if(req.url==='/storage'){
+    if(req.headers.origin){res.writeHead(403);res.end('{}');return}
+    try{if(req.method==='POST')maintainStorage(root);else if(req.method!=='GET')throw new Error('Unsupported method');res.end(JSON.stringify(storageStatus(root)))}
+    catch(e){res.writeHead(503);res.end(JSON.stringify({error:e.message}))}return;
+  }
   if(req.url==='/scan'&&req.method==='POST'){
     if(req.headers.origin){res.writeHead(403);res.end('{"error":"Server requests only"}');return}
     try{
@@ -59,7 +77,9 @@ process.on('uncaughtException',e=>{log(e.stack||e);void stop()});
 control.listen(config.controlPort,'127.0.0.1',async()=>{
   writeFileSync(path.join(config.data,'service-pid.json'),JSON.stringify({pid:process.pid,startedAt:Date.now(),root}));
   log('Local service started. Binds only to 127.0.0.1.');
+  await loadProviderSettings(root);
   exchangeNetwork=await startExchangeNetwork(log,config.transportPort);
+  const maintenance=setInterval(()=>{try{maintainStorage(root)}catch(e){log('Storage maintenance: '+e.message)}},3600000);maintenance.unref();
   let delay=5000;
   while(!stopping){
     collectorAbort=new AbortController();
@@ -87,6 +107,7 @@ control.listen(config.controlPort,'127.0.0.1',async()=>{
     }
     if(ready){
       delay=5000;log('Server ready. Starting browser-independent collector.');
+      try{maintainStorage(root)}catch(e){log('Storage maintenance: '+e.message)}
       const collectorSignal=collectorAbort.signal;
       void (async()=>{
         while(!collectorSignal.aborted&&!stopping){

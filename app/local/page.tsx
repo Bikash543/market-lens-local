@@ -1,5 +1,6 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
+import LocalMaintenance from '@/components/local-maintenance';
 import RefreshFeedback,{useRefreshFeedback} from '@/components/refresh-feedback';
 import {refreshOutcome} from '@/lib/refresh-outcome';
 export default function LocalStatus(){
@@ -33,10 +34,11 @@ export default function LocalStatus(){
     <p>All application services run locally. Public market APIs still require an internet connection.</p>
     <button className="button" disabled={loading} aria-busy={loading} onClick={()=>void refresh(true)}>{loading?'Loading…':'Refresh status'}</button>
     {error&&<p role="alert">{error}</p>}
+    <LocalMaintenance/>
     {status&&<>
       <h2>{status.running?'Background collector running':'Collector is starting or stopped'}</h2>
       <p>Last heartbeat: {status.collector?.heartbeatAt?new Date(status.collector.heartbeatAt).toLocaleString():'Not received'}<br/>
-      Saved observations: {status.history.observations} · 4h history: {status.history.fourHour.usable?'Ready':'Collecting — needs approximately 4 hours awake'}<br/>
+      Saved observations: {status.history.observations} · 4h history: {status.history.fourHour.usable?'Ready':'Pending — CMC history with a configured key, or ~4 hours of local CoinLore history'}<br/>
       First saved observation: {status.history.firstObservationAt?new Date(status.history.firstObservationAt).toLocaleString():'Waiting'}<br/>
       Latest saved observation: {status.history.latestObservationAt?new Date(status.history.latestObservationAt).toLocaleString():'Waiting'}<br/>
       Next context collection: {status.collector?.nextContextAt?new Date(status.collector.nextContextAt).toLocaleTimeString():'Starting'}<br/>
@@ -47,7 +49,9 @@ export default function LocalStatus(){
       <button className="button secondary" onClick={importWatchlist} disabled={!symbols.trim()}>Add to watchlist</button>
       <p>Saved in a local SQLite database. Browser data clearing does not erase your watchlist. Open or reload All Markets after importing.</p>
       <a href="/api/local/backup" download="market-lens-backup.json">Download settings and history backup</a>
-      <h2>Background scan</h2>
+      {status.timestamps&&<details><summary>Direction timestamp diagnostics</summary><p>State: {status.timestamps.state} · page difference: {Math.round((status.timestamps.skewMs??0)/1000)}s · source age: {Math.round((status.timestamps.ageMs??0)/1000)}s</p><p>Provider page times: {status.timestamps.pageTimes.map((t:number|null)=>t?new Date(t).toISOString():'Invalid').join(' / ')}</p></details>}
+      <h2>Dominance recovery</h2><p>{status.recovery?.message||'Recovery status will be available after the next context collection.'}</p>
+      <h2>Context readiness</h2><ul>{Object.entries(status.collector?.contextFeeds??{}).map(([route,v]:[string,any])=><li key={route}>{route}: {v.error||(!v.ready?v.pending?.join(' ')||'Pending':'Ready')}</li>)}</ul><p>Direction observations collect every minute. Other context collects every five minutes. Saved views change only on manual Refresh.</p><h2>Background scan</h2>
       <p>Saved candle windows reused: {status.collector?.reused??0}. New windows are scheduled after their close; funding is checked independently.</p>
       {status.collector?.recovery&&<p>Last history recovery: {new Date(status.collector.recovery.at).toLocaleString()} · {status.collector.recovery.restored} original observations restored. Exchange candle history fills available price gaps. Missing CoinLore intraday observations cannot be reconstructed and remain unavailable.</p>}
       <p>{status.collector?.phase||'Starting'} · Watchlist coins have priority; all active contracts are scanned in a paced rotation on 15m and 1h.</p>
