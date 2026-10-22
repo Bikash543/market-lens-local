@@ -46,6 +46,10 @@ Also includes light/dark themes, desktop and Windows sign-in shortcuts, refresh 
 
 ## Latest source improvements
 
+- The desktop supervisor checks the actual local API, recovers after three consecutive failures even if the server parent is still alive, and stops the previous collector before starting its replacement. Saved data remains in the same directory.
+- The pinned local runtime runs without the developer inspector or browser live reload. Source and packaged installations retain their own ports and persistent data paths.
+- When a CoinMarketCap key is configured, current dominance and four-hour listings use the authenticated endpoints too. Current dominance quotes are reused for five minutes with their original timestamps, and historical recovery requests only a missing same-provider baseline.
+- Recovery status is checked against the saved baseline on each attempt. Current-quote failures replace an old Ready status, and history failures retain valid current quotes without claiming history is ready.
 - Aggregate OI includes only exchange-classified, active crypto USDT perpetuals. Stocks, commodities and other non-crypto contracts are excluded from both endpoints of every comparison.
 - Historical OI recovery continues toward full coverage after reaching the minimum usable threshold. Each timeframe shows matched-contract counts, notional coverage and remaining errors.
 - Manual refresh and background collection remain independent. Navigation restores the displayed view; it never starts a market scan.
@@ -54,7 +58,7 @@ Also includes light/dark themes, desktop and Windows sign-in shortcuts, refresh 
 - Touched trade plans remain retired; improved candle checks prevent incomplete or stale data from becoming confirmation.
 - Optional provider keys use Windows credential protection. Bounded caches, log rotation and lossless chart storage preserve watchlists and saved analysis.
 
-See [aggregate OI methodology](docs/aggregate-oi-history.md). No personal watchlist, API key, history database or runtime log is included in this repository.
+See [runtime and provider update](docs/runtime-provider-update.md) and [aggregate OI methodology](docs/aggregate-oi-history.md). No personal watchlist, API key, history database or runtime log is included in this repository.
 
 ## Efficiency improvements in 0.3.0
 
@@ -122,12 +126,12 @@ Navigation, timeframe changes and refocusing the browser do not trigger provider
 Independently, the background service collects:
 
 - Market quotes approximately every minute.
-- Direction, dominance and supporting context approximately every five minutes.
+- Direction observations approximately every minute; dominance and supporting context approximately every five minutes. Provider caches and cooldowns can reduce outbound requests.
 - Individual 15m/1h contract analyses after candle closes, sharing a paced queue with manual requests and prioritising the watchlist. Current analyses are reused with fresh funding checks.
 
 Closing Brave does not stop the service. **Sleep, shutdown or loss of connectivity interrupts collection.** The collector resumes when the PC is running and connected; it never invents missed history.
 
-A new installation starts with an empty watchlist and no saved history. The first measured 4h reading needs approximately four hours of observations, with suitable coverage and matching timestamps. Until then it displays **COLLECTING**. Provider delays can extend the wait.
+A new installation starts with an empty watchlist and no saved history. Collected four-hour direction needs approximately four hours of suitable, timestamp-matched observations. Optional CoinMarketCap historical recovery can provide that context earlier when the account has working historical access; access is verified, not assumed. Aggregate OI has separate official-history recovery. Missing comparisons display **COLLECTING** or **UNAVAILABLE** with a reason; provider delays can extend the wait.
 
 See [manual refresh behaviour](MANUAL-REFRESH.md) and [local operations](LOCAL-README.md).
 

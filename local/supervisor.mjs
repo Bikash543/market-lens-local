@@ -1,7 +1,6 @@
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {appendFileSync,mkdirSync,existsSync,renameSync,statSync,writeFileSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {runCollector} from './collector.mjs';
@@ -9,6 +8,7 @@ import {startExchangeNetwork} from './exchange-network.mjs';
 import {maintainStorage,storageStatus,trimLogs} from './storage-maintenance.mjs';
 import {loadProviderSettings,providerStatus,saveProviderKey} from './provider-settings.mjs';
 import {createWorkQueue} from './work-queue.mjs';
+import {localJSON,monitorServer} from './service-health.mjs';
 import {runtimeConfig} from './runtime-config.mjs';
 const config=runtimeConfig(),root=config.root;
 process.env.MARKET_LENS_DATA_DIR=config.data;
@@ -24,18 +24,19 @@ function log(message){
 let serverProcess=null,stopping=false,collectorAbort=null,exchangeNetwork=null;
 const scanQueue=createWorkQueue({spacingMs:job=>job.exchange==='Binance'?1000:1600,run:async(job,signal)=>{
   const response=await fetch(config.origin+'/api/local/scan-work',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(job),signal});
-  const value=await response.json();if(!response.ok)throw new Error(value.error||'Scan worker unavailable');return value;
+  return localJSON(response);
 }});
+async function stopServer(child){
+  if(!child?.pid||child.exitCode!==null||child.signalCode!==null)return;
+  await new Promise(resolve=>{
+    const killer=spawn(path.join(process.env.SystemRoot||'C:\\Windows','System32','taskkill.exe'),['/PID',String(child.pid),'/T','/F'],{windowsHide:true});
+    killer.on('close',resolve);killer.on('error',resolve);
+  });
+}
 async function stop(){
   if(stopping)return;stopping=true;collectorAbort?.abort();
   scanQueue.close();
-  if(serverProcess?.pid){
-    // Only the child process tree started and recorded by this supervisor.
-    await new Promise(resolve=>{
-      const killer=spawn(path.join(process.env.SystemRoot||'C:\\Windows','System32','taskkill.exe'),['/PID',String(serverProcess.pid),'/T','/F'],{windowsHide:true});
-      killer.on('close',resolve);killer.on('error',resolve);
-    });
-  }
+  await stopServer(serverProcess);
   exchangeNetwork?.close();log('Stopped by user.');control.close(()=>process.exit(0));setTimeout(()=>process.exit(0),2000).unref();
 }
 const control=createServer(async(req,res)=>{
@@ -84,11 +85,7 @@ control.listen(config.controlPort,'127.0.0.1',async()=>{
   while(!stopping){
     collectorAbort=new AbortController();
     serverProcess=spawn(process.execPath,[
-      '--import','./scripts/sites-env.mjs',config.wrangler,'dev',
-      '--config','dist/server/wrangler.json','--local','--persist-to',path.join(config.data,'state'),
-      '--ip','127.0.0.1','--port',String(config.port),'--inspector-port','0',
-      '--var',`MARKET_LENS_TRANSPORT_ORIGIN:${config.transportOrigin}`,
-      '--var',`MARKET_LENS_CONTROL_ORIGIN:${config.controlOrigin}`
+      '--experimental-vm-modules','./local/server.mjs'
     ],{cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,SITES_RUNTIME_ROOT:path.join(config.data,'runtime'),WRANGLER_SEND_METRICS:'false',BROWSER:'none',NO_COLOR:'1'}});
     let exited=false;
     const ended=new Promise(resolve=>{
@@ -97,6 +94,10 @@ control.listen(config.controlPort,'127.0.0.1',async()=>{
     });
     serverProcess.stdout.on('data',b=>log(b.toString().trim()));
     serverProcess.stderr.on('data',b=>log(b.toString().trim()));
+    const child=serverProcess;
+    let collection=Promise.resolve(),health=Promise.resolve();
+    const serverLifetime=new AbortController();
+    void ended.then(()=>serverLifetime.abort());
     let ready=false;
     for(let i=0;i<60&&!exited&&!stopping;i++){
       try{
@@ -109,7 +110,7 @@ control.listen(config.controlPort,'127.0.0.1',async()=>{
       delay=5000;log('Server ready. Starting browser-independent collector.');
       try{maintainStorage(root)}catch(e){log('Storage maintenance: '+e.message)}
       const collectorSignal=collectorAbort.signal;
-      void (async()=>{
+      collection=(async()=>{
         while(!collectorSignal.aborted&&!stopping){
           try{await runCollector({root,dataDirectory:config.data,origin:config.origin,signal:collectorSignal,log})}
           catch(e){log('Collector error: '+e.stack)}
@@ -119,8 +120,20 @@ control.listen(config.controlPort,'127.0.0.1',async()=>{
           }
         }
       })();
-    }else log('Server has not become ready; inspect log for errors.');
-    await ended;collectorAbort.abort();serverProcess=null;
+      health=monitorServer({signal:serverLifetime.signal,probe:async signal=>{
+        const r=await fetch(config.origin+'/api/local/status',{signal:AbortSignal.any([signal,AbortSignal.timeout(3000)])});
+        return (await localJSON(r))?.application==='Market Lens Local';
+      },onUnhealthy:async()=>{
+        if(stopping||exited)return;
+        log('Local worker failed 3 consecutive health checks. Restarting its process tree; saved data is retained.');
+        collectorAbort.abort();await stopServer(child);
+      }});
+    }else if(!exited&&!stopping){
+      log('Server readiness timed out. Restarting its process tree.');
+      await stopServer(child);
+    }
+    await ended;collectorAbort.abort();serverLifetime.abort();
+    await Promise.allSettled([collection,health]);serverProcess=null;
     if(!stopping){await sleep(delay);delay=Math.min(60000,delay*2)}
   }
 });

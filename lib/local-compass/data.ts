@@ -70,7 +70,7 @@ async function cmcContext(){
       const settings:any=await fetch((process.env.MARKET_LENS_CONTROL_ORIGIN||'http://127.0.0.1:8788')+'/providers',{signal:AbortSignal.timeout(2500)}).then(r=>r.json());
       if(!settings.cmc?.configured)throw new Error('CMC history needs an API key in Local settings; using collected CoinLore history when available.');
       const get=(url:string)=>upstreamJSON(url,{timeoutMs:5000,attempts:1,gate:sharedGate});
-      const current=cmcConstituents(await get('https://pro-api.coinmarketcap.com/public-api/v3/cryptocurrency/listings/latest?start=1&limit=125&convert=USD'));
+      const current=cmcConstituents(await get('https://pro-api.coinmarketcap.com/v3/cryptocurrency/listings/latest?start=1&limit=125&convert=USD'));
       const history=await get('https://pro-api.coinmarketcap.com/v3/cryptocurrency/quotes/historical?'+cmcHistoryQuery(current));
       const context=cmcFourHour(current,history);
       await writeSetting('cmc-four-retry',{until:0,message:''});

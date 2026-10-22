@@ -7,7 +7,7 @@ export function allowedURL(raw){
   const url=new URL(raw);
   if(url.protocol!=='https:'||url.username||url.password||url.port||!hosts.has(url.hostname))throw new Error('Unsupported exchange URL');
   const allowed=url.hostname==='api.gateio.ws'?/^\/api\/v4\/futures\/usdt\/(contract_stats|contracts\/[A-Z0-9_]+|funding_rate)$/.test(url.pathname):
-    url.hostname==='pro-api.coinmarketcap.com'?['/v1/global-metrics/quotes/historical','/v3/cryptocurrency/quotes/historical','/public-api/v1/global-metrics/quotes/latest','/public-api/v3/cryptocurrency/quotes/latest','/public-api/v3/cryptocurrency/listings/latest'].includes(url.pathname):
+    url.hostname==='pro-api.coinmarketcap.com'?['/v1/global-metrics/quotes/historical','/v3/cryptocurrency/quotes/historical','/v1/global-metrics/quotes/latest','/v3/cryptocurrency/quotes/latest','/v3/cryptocurrency/listings/latest','/public-api/v1/global-metrics/quotes/latest','/public-api/v3/cryptocurrency/quotes/latest','/public-api/v3/cryptocurrency/listings/latest'].includes(url.pathname):
     url.hostname==='api.coinalyze.net'?['/v1/future-markets','/v1/open-interest','/v1/funding-rate','/v1/open-interest-history'].includes(url.pathname):
     url.hostname==='openapi.okx.com'?
     /^\/api\/v5\/(public|market|rubik\/stat)\//.test(url.pathname):

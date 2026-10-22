@@ -88,7 +88,7 @@ export async function market(){
   }
 }
 let globalProvider='CoinPaprika';
-export async function globalMarket(){return cache('global:v5',60000,async()=>{
+export async function globalMarket(){return cache('global:v6',60000,async()=>{
   let btc:number,usdt:number,time:number,marketCap:number,source:string;
   async function load(provider:string){
     if(provider==='CoinMarketCap')return cmcCurrent();
@@ -104,9 +104,9 @@ export async function globalMarket(){return cache('global:v5',60000,async()=>{
     if(![d.btc,d.usdt,d.time,d.marketCap].every(Number.isFinite)||d.marketCap<=0||d.btc<=0||d.usdt<=0||d.btc>100||d.usdt>100||Date.now()-d.time>1800000)throw new Error(`${provider} dominance data is invalid or stale`);
     return d;
   };
-  let data;
+  let data,providerWarning:string|undefined;
   // Historical recovery is optional; a key or upstream failure cannot disable existing feeds.
-  try{data=await recoverDominance()}catch{}
+  try{data=await recoverDominance()}catch(e){providerWarning=`CoinMarketCap recovery unavailable: ${(e as Error).message}`}
   if(!data){
     for(const provider of [...new Set([globalProvider,'CoinPaprika','CoinGecko','CoinMarketCap'])]){try{data=await checked(provider);break}catch{}}
   }
@@ -123,7 +123,8 @@ export async function globalMarket(){return cache('global:v5',60000,async()=>{
     history=(await deadline(env.DB.prepare('SELECT time,btc,usdt FROM dominance WHERE source = ? AND time >= ? ORDER BY time').bind(source,time-7200000).all<{time:number;btc:number;usdt:number}>(),1000,'Dominance history read timed out')).results;
   }catch{historyError='Dominance history is temporarily unavailable; full setups are withheld'}}
   const baseline=[...history].reverse().find(x=>x.time<=time-3300000&&x.time>=time-4500000);
-  return {btc,usdt,updated:time,btcChange:baseline?btc-baseline.btc:null,usdtChange:baseline?usdt-baseline.usdt:null,baseline:baseline?.time??null,history,marketCap,source,historyError};
+  if(!baseline&&providerWarning&&!historyError)historyError=`${providerWarning}. Using ${source}; its comparable history is pending.`;
+  return {btc,usdt,updated:time,btcChange:baseline?btc-baseline.btc:null,usdtChange:baseline?usdt-baseline.usdt:null,baseline:baseline?.time??null,history,marketCap,source,historyError,providerWarning};
 })}
 export async function reuseSavedScan(symbol:string,interval:string,exchange:Venue){
   const saved=await env.DB!.prepare('SELECT body,error FROM local_analyses WHERE exchange=? AND symbol=? AND interval=?').bind(exchange,symbol,interval).first<{body:string|null;error:string|null}>();

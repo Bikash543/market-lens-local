@@ -10,9 +10,9 @@ Keep the application folder in a permanent location. Its `data/state/` directory
 
 ## Background service
 
-The supervisor starts the local web server, a restricted public exchange-data transport, and the collector. It recovers from unexpected server exits and collector errors. All listeners use `127.0.0.1`; ports 8787–8789 must be available.
+The supervisor starts the local web server, a restricted public exchange-data transport, and the collector. It recovers from unexpected server exits and collector errors. After startup, it checks the actual local API every ten seconds: three consecutive failures trigger recovery of only its recorded server process tree. An unresponsive worker is therefore detected even if the parent process is still alive. The previous collector is stopped before its replacement starts. All listeners use `127.0.0.1`; ports 8787–8789 must be available.
 
-Closing the browser does not stop collection. Keep the PC awake and online when accumulating history. Missing observations after sleep or outages are skipped. Four-hour bias remains unavailable until real observations cover the required comparison window.
+Closing the browser does not stop collection. Keep the PC awake and online when accumulating history. Missing observations after sleep or outages are skipped. Four-hour direction requires collected history or verified CoinMarketCap historical recovery; aggregate OI has separate official-history recovery. Upstream failures can still leave these comparisons unavailable.
 
 ## Manual refresh
 
