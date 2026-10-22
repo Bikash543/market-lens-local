@@ -90,3 +90,16 @@ test('cache budget and full expiry cleanup preserve protected data and active ra
 test('CMC API-level errors cannot pass a successful-HTTP health check',()=>{
   assert.equal(inspectHealth(200,JSON.stringify({status:{error_code:1001,error_message:'Invalid API key'}})).healthy,false);
 });
+
+test('packaged storage maintenance writes its report beside the configured user database',t=>{
+  const root=temp(t),data=path.join(root,'User data'),app=path.join(root,'Installed app');
+  const dir=path.join(data,'state/v3/d1/miniflare-D1DatabaseObject');fs.mkdirSync(dir,{recursive:true});
+  fs.mkdirSync(app);
+  const db=new DatabaseSync(path.join(dir,'test.sqlite'));db.exec('CREATE TABLE feed_cache(key TEXT PRIMARY KEY,body TEXT,expires INTEGER)');db.close();
+  const previous=process.env.MARKET_LENS_DATA_DIR;process.env.MARKET_LENS_DATA_DIR=data;
+  try{
+    const result=maintainStorage(app);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data,'storage-maintenance.json'),'utf8')),result);
+    assert.equal(fs.existsSync(path.join(app,'data')),false);
+  }finally{if(previous===undefined)delete process.env.MARKET_LENS_DATA_DIR;else process.env.MARKET_LENS_DATA_DIR=previous}
+});

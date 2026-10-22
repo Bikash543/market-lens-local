@@ -30,10 +30,13 @@ No signing certificate is configured. A release must say the executable is unsig
 
 `smoke-test.ps1` installs the actual setup executable silently into a test folder with shortcuts disabled, runs it using its bundled Node executable, checks application routes and collector activity, verifies watchlist persistence after restart and reinstall, then uninstalls it and checks that saved data survives.
 
+Pass `-PreviousInstallerPath` to install an earlier released executable first and verify an actual version upgrade. The test captures its watchlist and existing history, adds isolated preferences, saved-view/chart and history fixtures plus a Windows-encrypted test credential, then checks preservation and decryption after upgrade, reinstall and uninstall. It also checks the bundled PDF routes and immediate watchlist reads across three restarts. It never reads or copies your personal app data.
+
 It uses ports 18787–18789 and a data directory inside `work/installer-smoke/`. It leaves any service on the default ports untouched. Run it only on a machine that does **not** already have the packaged installer version registered, since a Windows installation has one registration per AppId:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\smoke-test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\installer\smoke-test.ps1 -PreviousInstallerPath .\release\Market-Lens-Local-Setup-0.3.0-x64.exe
 ```
 
 This verifies packaging and local persistence. It does not establish strategy profitability, guarantee public API availability, or simulate four hours of market history.

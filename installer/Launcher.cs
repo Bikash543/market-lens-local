@@ -11,8 +11,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("Local crypto futures research dashboard launcher")]
 [assembly: AssemblyCompany("Bikash543")]
 [assembly: AssemblyProduct("Market Lens Local")]
-[assembly: AssemblyVersion("0.2.0.0")]
-[assembly: AssemblyFileVersion("0.2.0.0")]
+[assembly: AssemblyVersion("0.4.0.0")]
+[assembly: AssemblyFileVersion("0.4.0.0")]
 
 internal static class Launcher
 {

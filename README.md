@@ -7,7 +7,7 @@ A local crypto futures research dashboard for Windows. Screen perpetual markets,
 ## Install on Windows — no commands needed
 
 1. Open [GitHub Releases](https://github.com/Bikash543/market-lens-local/releases/latest).
-2. Download **Market-Lens-Local-Setup-0.3.0-x64.exe** from Assets.
+2. Download **Market-Lens-Local-Setup-0.4.0-x64.exe** from Assets.
 3. Run the installer and choose whether to create a desktop shortcut and start background collection at Windows sign-in.
 4. Open **Market Lens Local** from your desktop or Start menu.
 
@@ -17,9 +17,9 @@ The installer is **unsigned**, so Windows may display an unknown-publisher or Sm
 
 Installed app data is stored in `%LOCALAPPDATA%\Market Lens Local\data`, separately from the program files. Updates and uninstall preserve this folder. Use the Start menu's **Stop background collection** shortcut to stop the service; Windows Settings → Apps removes the program. The installer does not automatically update itself.
 
-The v0.3.0 installer predates the source updates described below. Downloading source from `main` includes the latest fixes; the existing installer has not been rebuilt with them.
+The v0.4.0 installer includes the reliability, history recovery, storage and user-guide updates described below. Run it over the existing installer edition to update; your saved data stays in its existing data directory.
 
-In current source, aggregate OI can recover 15m, 1h and 4h comparisons from official OKX history. This is separate from market-direction bias: an optional CoinMarketCap key enables verified historical recovery where the account has access; otherwise direction uses collected same-provider history. Missing history is never fabricated.
+Aggregate OI can recover 15m, 1h and 4h comparisons from official OKX history. This is separate from market-direction bias: an optional CoinMarketCap key enables verified historical recovery where the account has access; otherwise direction uses collected same-provider history. Missing history is never fabricated.
 
 Developers can use the source installation below. Only run one installation on the default ports at a time.
 
@@ -31,7 +31,7 @@ Open **User Guide** in the app's navigation for **Open PDF** and **Download PDF*
 
 [Read or download the user guide](public/guides/Market-Lens-User-Guide-and-Rules.pdf) · [Open the guide in the live app](https://market-lens-futures.rupeshwarsah35.chatgpt.site/user-guide)
 
-Edition: 21 October 2026. Later source changes may supersede individual rules in this dated guide. The existing v0.3.0 installer has not been rebuilt with this addition.
+Edition: 21 October 2026. Later source changes may supersede individual rules in this dated guide. The PDF and User Guide page are included in the v0.4.0 installer.
 
 | Workspace | What it does |
 | --- | --- |
@@ -44,7 +44,7 @@ Edition: 21 October 2026. Later source changes may supersede individual rules in
 
 Also includes light/dark themes, desktop and Windows sign-in shortcuts, refresh loading indicators, success notifications after rendering, and clear partial/failure notifications.
 
-## Latest source improvements
+## Improvements included in 0.4.0
 
 - The desktop supervisor checks the actual local API, recovers after three consecutive failures even if the server parent is still alive, and stops the previous collector before starting its replacement. Saved data remains in the same directory.
 - The pinned local runtime runs without the developer inspector or browser live reload. Source and packaged installations retain their own ports and persistent data paths.

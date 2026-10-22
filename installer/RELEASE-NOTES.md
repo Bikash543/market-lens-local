@@ -1,46 +1,41 @@
-# Market Lens Local 0.3.0 — Faster manual refresh and background collection
+# Market Lens Local 0.4.0 — History recovery and desktop reliability
 
-Download **Market-Lens-Local-Setup-0.3.0-x64.exe** below, run it, and open **Market Lens Local** from the desktop or Start menu.
+Download **Market-Lens-Local-Setup-0.4.0-x64.exe**, run it, and open **Market Lens Local** from the desktop or Start menu. Existing installer users can install over their current version.
 
-## Improved in this release
+## Fixes and improvements
 
-- Bulk reuse of current closed-candle analyses, with fresh funding validation.
-- Candle-aware background scheduling and a shared, bounded scan queue with deduplication, manual-request priority and starvation protection.
-- Shared OKX data caches across compatible features; spot and futures flow remain separate.
-- Compact market rows, batched screen updates and exact-version chart data loaded on selection.
-- Recovery of genuine saved observations at startup or after sleep, plus official candle-history fallback.
-- Existing manual refresh, watchlists, 15m/1h analyses, 4h context, themes and all workspaces are retained. Signal formulas and thresholds are unchanged.
+- CoinMarketCap recovery uses a configured key for current dominance and four-hour listings as well as history. Authenticated and keyless caches remain separate; cached quotes retain their original timestamps.
+- Dominance readiness checks the saved same-provider baseline. Failed quotes or unavailable history no longer leave an earlier Ready status displayed.
+- The desktop supervisor checks the actual local API and recovers a failed worker without overlapping background collectors. Developer live reload and the inspector are disabled.
+- Aggregate OI historical recovery covers 15m, 1h and 4h using only active crypto USDT perpetuals, with matching-contract coverage and remaining errors shown.
+- CoinLore page alignment, partial-refresh messages, OI sorting, trade-plan retirement and storage improvements from the current source are now included in the installer.
+- User Guide navigation includes the bundled PDF, available to open or download offline.
+- Packaged storage maintenance writes its report beside the configured user database instead of the replaceable program files.
+- Startup maintenance completes before the web worker opens the database, avoiding competing access during launch.
 
-## Included
+The original signal rules remain in place. This release does not include the retired Signal Lab filters or AI features. All Markets, Watchlist, Overall Direction, selected-coin Trade Confirmation, data health, themes and background collection remain available.
 
-- Complete app plus a pinned Node.js runtime: no Node/npm installation, commands, exchange API key or administrator access required.
-- All Markets, persistent Watchlist, Overall Direction (15m/1h/4h), Trade Confirmation and local collector status.
-- Manual screen refresh with loading, success and partial-result feedback.
-- Optional desktop shortcut and background collection at Windows sign-in.
-- Start-menu shortcut to stop background collection.
-- Getting-started guide, Windows uninstall support and SHA-256 checksum file.
+## Manual refresh and saved data
 
-## System requirements
+Screens retain manual refresh. Background collection continues independently while Windows is awake and connected, including after the browser closes. Sleep and shutdown pause collection.
 
-Windows 10 version 2004 or newer, or Windows 11; x64. Internet access is needed for market data. Brave is optional; the default browser is supported.
+Watchlists, provider settings, saved analyses, history and backups remain in `%LOCALAPPDATA%\Market Lens Local\data`, outside the program directory. Updates and uninstall retain this folder. Optional provider keys stay locally protected with Windows credential protection. No personal keys or saved user data are included in the installer.
 
-## Saved data and updates
+Historical recovery depends on provider availability and the account's access. It can avoid waiting for a new four-hour observation window when suitable history is available; it does not guarantee immediate 15m/1h/4h readiness or fabricate missing observations.
 
-The installer keeps watchlists, history, logs and backups in `%LOCALAPPDATA%\Market Lens Local\data`. Updating or uninstalling the app preserves this folder. Download and run a newer installer to update; automatic updates are not enabled.
+## Included and requirements
 
-Background collection works while Windows is running and connected, even after the browser closes. Sleep and shutdown pause collection. A fresh installation needs approximately four hours of measured history before its first complete 4h bias; provider delays can extend this.
-
-Only one Market Lens installation may use the default local ports. Stop an existing source installation before launching this edition.
+- Bundled Node.js runtime: no Node/npm installation, terminal commands or administrator access required.
+- Optional desktop shortcut and background collection at Windows sign-in; a Start-menu command stops collection.
+- Windows 10 version 2004 or newer / Windows 11, x64. Internet is required for market data. Brave is optional.
+- Run only one installation on the default ports. Source installations and installer editions have separate data folders; installing does not automatically import a source checkout's watchlist.
 
 ## Verification
 
-- 107 automated tests passed, including seven-coin/two-timeframe signal parity, freshness rejection, queue deduplication, fairness and timeouts.
-- TypeScript check and production build passed.
-- Actual installer tested in an isolated directory, using the bundled Node runtime with developer Node/npm removed from PATH.
-- Verified application pages, collector heartbeat without a browser, watchlist persistence after restart and reinstall, backup access, and uninstall with user-data retention.
+193 automated tests, TypeScript and the production build passed. Installation checks cover actual silent installation with bundled Node, application and PDF routes, background heartbeat without a browser, and an upgrade from the published 0.3.0 installer. Persistence checks include watchlist, preferences, saved views/charts, history fixtures and Windows-encrypted test data retained through upgrade, reinstall and uninstall. Immediate watchlist reads passed across three restarts. The original desktop service remained running with the same process ID.
 
-## Signing and limitations
+## Signing
 
-This installer is **unsigned**. Windows may show an unknown-publisher or SmartScreen notice. Obtain it from this repository's release and use `SHA256SUMS.txt` to verify the artifact when needed; a checksum is not a code-signing certificate.
+This installer is **unsigned**. Windows may show an unknown-publisher or SmartScreen notice. Download from this repository and use the attached `SHA256SUMS.txt` to check the artifact. A checksum is not a code-signing certificate.
 
-Signals are research rules, not a win probability or a profit guarantee. Public market-data providers can be unavailable or delayed. The app does not execute orders or connect to a trading account.
+Signals express rule agreement, not a win probability. Data providers can be unavailable or delayed. The app does not execute orders.

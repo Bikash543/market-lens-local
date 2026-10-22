@@ -87,6 +87,6 @@ export function maintainStorage(root,limits=STORAGE_LIMITS){
     if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='local_retired_plans'").get())db.prepare('DELETE FROM local_retired_plans WHERE expires<?').run(Date.now());
     db.exec('PRAGMA optimize;');trimLogs(root);
     const result={at:Date.now(),removedCacheEntries:removed,evictedCacheEntries:evicted,archived};
-    fs.writeFileSync(path.join(root,'data/storage-maintenance.json'),JSON.stringify(result));return result;
+    fs.writeFileSync(path.join(process.env.MARKET_LENS_DATA_DIR||path.join(root,'data'),'storage-maintenance.json'),JSON.stringify(result));return result;
   }finally{db.close()}
 }

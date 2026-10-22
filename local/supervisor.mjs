@@ -83,6 +83,9 @@ control.listen(config.controlPort,'127.0.0.1',async()=>{
   const maintenance=setInterval(()=>{try{maintainStorage(root)}catch(e){log('Storage maintenance: '+e.message)}},3600000);maintenance.unref();
   let delay=5000;
   while(!stopping){
+    // Complete startup maintenance before the worker opens the same database.
+    // A first installation has no database yet; its scheduled pass handles it.
+    try{maintainStorage(root)}catch(e){if(e.code!=='ENOENT')log('Storage maintenance: '+e.message)}
     collectorAbort=new AbortController();
     serverProcess=spawn(process.execPath,[
       '--experimental-vm-modules','./local/server.mjs'
@@ -108,7 +111,6 @@ control.listen(config.controlPort,'127.0.0.1',async()=>{
     }
     if(ready){
       delay=5000;log('Server ready. Starting browser-independent collector.');
-      try{maintainStorage(root)}catch(e){log('Storage maintenance: '+e.message)}
       const collectorSignal=collectorAbort.signal;
       collection=(async()=>{
         while(!collectorSignal.aborted&&!stopping){
